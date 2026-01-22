@@ -4,14 +4,16 @@ import 'package:just_audio_background/just_audio_background.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/cache/audio_cache_manager.dart';
 import '../../core/config/r2_config.dart';
+import '../../core/config/supabase_config.dart';
 import '../../data/models/audio_version.dart';
 
 class AudioPlayerProvider {
   late AudioPlayer _audioPlayer;
-  final SupabaseClient _supabase = Supabase.instance.client;
+  final SupabaseClient _supabase = SupabaseConfig.client;
   final AudioCacheManager _cacheManager = AudioCacheManager();
   
   List<AudioVersion>? _currentVersions;
+  String? _currentProjectId;
   
   AudioPlayerProvider() {
     _audioPlayer = AudioPlayer();
@@ -77,6 +79,8 @@ class AudioPlayerProvider {
     List<String>? versionIds, // Se null, carrega todas
   }) async {
     try {
+      _currentProjectId = projectId;
+      
       // Buscar versões do projeto
       var query = _supabase
           .from('audio_versions')
@@ -84,12 +88,16 @@ class AudioPlayerProvider {
           .eq('project_id', projectId)
           .order('created_at', ascending: true);
       
-      if (versionIds != null && versionIds.isNotEmpty) {
-        query = query.in_('id', versionIds);
-      }
-      
       final response = await query;
-      final versionsData = response as List<dynamic>;
+      List<dynamic> versionsData = response as List<dynamic>;
+      
+      // Filtrar por versionIds se fornecido
+      if (versionIds != null && versionIds.isNotEmpty) {
+        versionsData = versionsData.where((v) {
+          final id = v['id'] as String;
+          return versionIds.contains(id);
+        }).toList();
+      }
       
       if (versionsData.isEmpty) {
         return false;
@@ -102,29 +110,43 @@ class AudioPlayerProvider {
       
       // Construir lista de AudioSource usando cache
       final List<AudioSource> audioSources = [];
-      final List<String> titles = [];
       
       for (var version in _currentVersions!) {
         final fileUrl = _buildR2ProxyUrl(version.fileUrl);
         
-        // Tentar obter do cache primeiro
+        // Tentar obter do cache primeiro (apenas em mobile/desktop)
         try {
           final cachedPath = await _cacheManager.getCachedFile(
             versionId: version.id,
             fileUrl: fileUrl,
           );
           
-          // Usar arquivo local para melhor performance e gapless perfeito
-          audioSources.add(
-            AudioSource.file(
-              cachedPath,
-              tag: MediaItem(
-                id: version.id,
-                title: version.name,
-                artist: 'Trashtalk Records',
+          // Se retornou URL (web), usar URI
+          if (cachedPath.startsWith('http')) {
+            audioSources.add(
+              AudioSource.uri(
+                Uri.parse(cachedPath),
+                headers: _getAuthHeaders(),
+                tag: MediaItem(
+                  id: version.id,
+                  title: version.name,
+                  artist: 'Trashtalk Records',
+                ),
               ),
-            ),
-          );
+            );
+          } else {
+            // Usar arquivo local para melhor performance e gapless perfeito
+            audioSources.add(
+              AudioSource.file(
+                cachedPath,
+                tag: MediaItem(
+                  id: version.id,
+                  title: version.name,
+                  artist: 'Trashtalk Records',
+                ),
+              ),
+            );
+          }
         } catch (e) {
           // Se falhar o cache, usar URL remota
           print('Cache falhou, usando URL remota: $e');
@@ -140,8 +162,6 @@ class AudioPlayerProvider {
             ),
           );
         }
-        
-        titles.add(version.name);
       }
       
       // Criar playlist concatenada (gapless)
@@ -157,6 +177,9 @@ class AudioPlayerProvider {
         preload: true,
       );
       
+      // Pré-carregar próximo track em background
+      _preloadNextTrack();
+      
       return true;
     } catch (e) {
       print('Erro ao carregar versões do projeto: $e');
@@ -165,7 +188,7 @@ class AudioPlayerProvider {
   }
   
   /// Pré-carrega próximo track em background
-  Future<void> preloadNextTrack() async {
+  Future<void> _preloadNextTrack() async {
     final currentIndex = await _audioPlayer.currentIndex;
     if (currentIndex != null && _currentVersions != null) {
       final nextIndex = currentIndex + 1;
@@ -179,6 +202,7 @@ class AudioPlayerProvider {
           fileUrl: fileUrl,
         ).catchError((e) {
           print('Erro ao pré-carregar próximo track: $e');
+          return '';
         });
       }
     }
@@ -217,6 +241,9 @@ class AudioPlayerProvider {
   // Getters para controle do player
   AudioPlayer get player => _audioPlayer;
   
+  /// Verifica se o player está tocando
+  bool get isPlaying => _audioPlayer.playing;
+  
   Stream<Duration> get positionStream => _audioPlayer.positionStream;
   Stream<Duration?> get durationStream => _audioPlayer.durationStream;
   Stream<PlayerState> get playerStateStream => _audioPlayer.playerStateStream;
@@ -241,6 +268,9 @@ class AudioPlayerProvider {
     }
     return null;
   }
+  
+  List<AudioVersion>? get currentVersions => _currentVersions;
+  String? get currentProjectId => _currentProjectId;
   
   // Limpar recursos
   Future<void> dispose() async {

@@ -30,6 +30,11 @@ CREATE POLICY "Coletivo pode ver perfis"
   ON profiles FOR SELECT
   USING (true);
 
+-- Usuários podem criar seu próprio perfil (importante para signup)
+CREATE POLICY "Usuários podem criar próprio perfil"
+  ON profiles FOR INSERT
+  WITH CHECK (auth.uid() = id);
+
 -- Usuários podem atualizar apenas seu próprio perfil
 CREATE POLICY "Usuários podem atualizar próprio perfil"
   ON profiles FOR UPDATE
@@ -46,11 +51,18 @@ CREATE TABLE projects (
   name TEXT NOT NULL,
   description TEXT,
   cover_image_url TEXT,
+  -- Referência para profiles, mas permite NULL caso o perfil não exista ainda
   created_by UUID REFERENCES profiles(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   is_archived BOOLEAN DEFAULT FALSE
 );
+
+-- NOTA: Se você já criou a tabela sem ON DELETE SET NULL, execute:
+-- ALTER TABLE projects ALTER COLUMN created_by DROP NOT NULL;
+-- ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_created_by_fkey;
+-- ALTER TABLE projects ADD CONSTRAINT projects_created_by_fkey 
+--   FOREIGN KEY (created_by) REFERENCES profiles(id) ON DELETE SET NULL;
 
 -- Índices
 CREATE INDEX idx_projects_created_at ON projects(created_at DESC);

@@ -29,11 +29,13 @@ dependencies:
   # UI
   cupertino_icons: ^1.0.6
   flutter_svg: ^2.0.9
+  google_fonts: ^6.1.0
 
   # Utilitários
   intl: ^0.18.1
   crypto: ^3.0.3
   connectivity_plus: ^5.0.2
+  file_picker: ^6.1.1
 
 dev_dependencies:
   flutter_test:
