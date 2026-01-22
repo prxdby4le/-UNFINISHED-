@@ -1,0 +1,44 @@
+name: trashtalk_records
+description: Central de Gravadora - Aplicativo para gestão de demos e versões de áudio
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Supabase
+  supabase_flutter: ^2.0.0
+
+  # Áudio
+  just_audio: ^0.9.36
+  just_audio_background: ^0.0.1-beta.17
+  audio_service: ^0.18.10
+
+  # Cache e Storage
+  path_provider: ^2.1.1
+  http: ^1.1.0
+
+  # State Management (escolha uma)
+  provider: ^6.1.1
+  # riverpod: ^2.4.9  # Alternativa
+
+  # UI
+  cupertino_icons: ^1.0.6
+  flutter_svg: ^2.0.9
+
+  # Utilitários
+  intl: ^0.18.1
+  crypto: ^3.0.3
+  connectivity_plus: ^5.0.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
