@@ -5,10 +5,19 @@ import '../models/project.dart';
 class ProjectRepository {
   final _supabase = SupabaseConfig.client;
 
-  /// Busca todos os projetos (não arquivados)
+  /// Busca todos os projetos do usuário atual (não arquivados)
   Future<List<Project>> getProjects({bool includeArchived = false}) async {
     try {
-      var query = _supabase.from('projects').select();
+      final user = _supabase.auth.currentUser;
+      if (user == null) {
+        print('Erro: Usuário não autenticado');
+        return [];
+      }
+
+      var query = _supabase
+          .from('projects')
+          .select()
+          .eq('created_by', user.id); // IMPORTANTE: Filtrar por usuário!
       
       if (!includeArchived) {
         query = query.eq('is_archived', false);
@@ -127,13 +136,20 @@ class ProjectRepository {
     await _supabase.from('projects').delete().eq('id', id);
   }
 
-  /// Busca projetos por nome (busca)
-  Future<List<Project>> searchProjects(String query) async {
+  /// Busca projetos por nome (busca) - apenas do usuário atual
+  Future<List<Project>> searchProjects(String searchQuery) async {
     try {
+      final user = _supabase.auth.currentUser;
+      if (user == null) {
+        print('Erro: Usuário não autenticado');
+        return [];
+      }
+
       final response = await _supabase
           .from('projects')
           .select()
-          .ilike('name', '%$query%')
+          .eq('created_by', user.id) // Filtrar por usuário!
+          .ilike('name', '%$searchQuery%')
           .eq('is_archived', false)
           .order('created_at', ascending: false);
 

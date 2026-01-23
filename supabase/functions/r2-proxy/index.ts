@@ -59,9 +59,27 @@ serve(async (req) => {
       })
     }
 
+    // Extrair token do header
+    const token = authHeader.replace('Bearer ', '')
+    
+    if (!token || token === authHeader) {
+      return new Response(JSON.stringify({ 
+        error: 'Invalid Authorization header format',
+        details: 'Expected: Bearer <token>'
+      }), {
+        status: 401,
+        headers: {
+          'Content-Type': 'application/json',
+          ...corsHeaders,
+        },
+      })
+    }
+
     // Validar JWT usando Supabase
     if (!supabaseUrl || !supabaseAnonKey) {
       console.error('Supabase URL or Anon Key not configured')
+      console.error('SUPABASE_URL:', supabaseUrl ? 'SET' : 'NOT SET')
+      console.error('SUPABASE_ANON_KEY:', supabaseAnonKey ? 'SET' : 'NOT SET')
       return new Response(JSON.stringify({ 
         error: 'Server configuration error',
         details: 'Supabase credentials not available'
@@ -75,29 +93,23 @@ serve(async (req) => {
     }
 
     try {
-      // Criar cliente Supabase com o token do usuário no header
-      const supabase = createClient(
-        supabaseUrl,
-        supabaseAnonKey,
-        {
-          global: {
-            headers: { Authorization: authHeader },
-          },
-          auth: {
-            persistSession: false,
-            autoRefreshToken: false,
-          },
-        }
-      )
+      // Criar cliente Supabase
+      const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+        },
+      })
       
-      // Verificar se o token é válido obtendo o usuário
-      // getUser() usa automaticamente o token do header Authorization
-      const { data: { user }, error: authError } = await supabase.auth.getUser()
+      // Verificar se o token é válido passando explicitamente
+      const { data: { user }, error: authError } = await supabase.auth.getUser(token)
       
       if (authError) {
         console.error('Auth error:', authError.message)
+        console.error('Token (first 20 chars):', token.substring(0, 20) + '...')
         return new Response(JSON.stringify({ 
-          error: 'Unauthorized: Invalid JWT',
+          code: 401,
+          message: 'Invalid JWT',
           details: authError.message 
         }), {
           status: 401,
@@ -110,7 +122,8 @@ serve(async (req) => {
       
       if (!user) {
         return new Response(JSON.stringify({ 
-          error: 'Unauthorized: User not found'
+          code: 401,
+          message: 'User not found'
         }), {
           status: 401,
           headers: {
@@ -120,12 +133,13 @@ serve(async (req) => {
         })
       }
       
-      // Log para debug (remover em produção)
-      console.log('Authenticated user:', user.id)
+      // Log para debug
+      console.log('Authenticated user:', user.id, user.email)
     } catch (error) {
       console.error('JWT validation error:', error)
       return new Response(JSON.stringify({ 
-        error: 'Unauthorized: JWT validation failed',
+        code: 401,
+        message: 'JWT validation failed',
         details: error instanceof Error ? error.message : 'Unknown error'
       }), {
         status: 401,

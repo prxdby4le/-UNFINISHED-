@@ -1,12 +1,6 @@
 // lib/presentation/screens/login_screen.dart
 import 'package:flutter/material.dart';
-import '../../core/theme/app_theme.dart';
-import '../../core/theme/app_animations.dart';
 import '../../data/repositories/auth_repository.dart';
-import '../widgets/common/gradient_background.dart';
-import '../widgets/common/custom_input.dart';
-import '../widgets/common/custom_button.dart';
-import '../widgets/common/glass_card.dart';
 import 'projects_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -16,8 +10,7 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> 
-    with SingleTickerProviderStateMixin {
+class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -26,29 +19,13 @@ class _LoginScreenState extends State<LoginScreen>
   bool _isSignUp = false;
   String? _errorMessage;
   String? _successMessage;
-
-  late AnimationController _logoController;
-  late Animation<double> _logoAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-    _logoController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 2),
-    );
-    _logoAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(parent: _logoController, curve: Curves.elasticOut),
-    );
-    _logoController.forward();
-  }
+  bool _obscurePassword = true;
 
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
     _nameController.dispose();
-    _logoController.dispose();
     super.dispose();
   }
 
@@ -76,18 +53,17 @@ class _LoginScreenState extends State<LoginScreen>
         if (signUpResponse.user != null && signUpResponse.session == null) {
           if (mounted) {
             setState(() {
-              _successMessage = 'Conta criada com sucesso! Verifique seu email para confirmar.';
+              _successMessage = 'Account created! Check your email to confirm.';
               _isLoading = false;
             });
-            return;
-          }
-        }
-        
-        if (signUpResponse.session != null) {
-          if (mounted) {
-            _navigateToProjects();
           }
           return;
+        }
+        
+        if (mounted) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const ProjectsScreen()),
+          );
         }
       } else {
         await authRepo.signInWithEmail(
@@ -96,340 +72,294 @@ class _LoginScreenState extends State<LoginScreen>
         );
         
         if (mounted) {
-          _navigateToProjects();
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const ProjectsScreen()),
+          );
         }
       }
     } catch (e) {
-      setState(() {
-        _errorMessage = e.toString().replaceAll('Exception: ', '');
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _errorMessage = _parseError(e.toString());
+          _isLoading = false;
+        });
+      }
     }
   }
 
-  void _navigateToProjects() {
-    Navigator.of(context).pushReplacement(
-      PageRouteBuilder(
-        pageBuilder: (context, animation, secondaryAnimation) => 
-            const ProjectsScreen(),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return FadeTransition(
-            opacity: animation,
-            child: SlideTransition(
-              position: Tween<Offset>(
-                begin: const Offset(0.05, 0),
-                end: Offset.zero,
-              ).animate(CurvedAnimation(
-                parent: animation,
-                curve: Curves.easeOutCubic,
-              )),
-              child: child,
-            ),
-          );
-        },
-        transitionDuration: const Duration(milliseconds: 400),
-      ),
-    );
+  String _parseError(String error) {
+    if (error.contains('Invalid login credentials')) {
+      return 'Invalid email or password';
+    } else if (error.contains('Email not confirmed')) {
+      return 'Please confirm your email first';
+    } else if (error.contains('already registered')) {
+      return 'This email is already registered';
+    }
+    return 'An error occurred. Please try again.';
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: ParticleBackground(
-        child: SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(AppTheme.spacingLg),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 400),
-                child: Form(
+      backgroundColor: const Color(0xFF121212),
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // Logo
+                const Text(
+                  '[UNFINISHED]',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 32,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -1,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  _isSignUp ? 'Create your account' : 'Welcome back',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.5),
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 48),
+                
+                // Form
+                Form(
                   key: _formKey,
                   child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      // Logo animado
-                      FadeSlideIn(
-                        duration: const Duration(milliseconds: 800),
-                        offset: const Offset(0, -30),
-                        child: _buildLogo(),
-                      ),
-                      const SizedBox(height: AppTheme.spacing2xl),
-                      
-                      // Card do formulário
-                      FadeSlideIn(
-                        delay: const Duration(milliseconds: 200),
-                        child: GlassCard(
-                          padding: const EdgeInsets.all(AppTheme.spacingLg),
-                          blur: 15,
-                          opacity: 0.15,
-                          borderColor: AppTheme.surfaceHighlight.withOpacity(0.3),
-                          borderRadius: AppTheme.radiusXl,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              // Título
-                              Text(
-                                _isSignUp ? 'Criar Conta' : 'Entrar',
-                                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                ),
-                                textAlign: TextAlign.center,
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                _isSignUp 
-                                    ? 'Junte-se ao coletivo' 
-                                    : 'Bem-vindo de volta',
-                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                  color: AppTheme.textTertiary,
-                                ),
-                                textAlign: TextAlign.center,
-                              ),
-                              const SizedBox(height: AppTheme.spacingLg),
-                              
-                              // Campo Nome (apenas no signup)
-                              AnimatedSize(
-                                duration: const Duration(milliseconds: 300),
-                                curve: Curves.easeOutCubic,
-                                child: _isSignUp
-                                    ? Column(
-                                        children: [
-                                          CustomInput(
-                                            controller: _nameController,
-                                            label: 'Nome',
-                                            hint: 'Seu nome artístico',
-                                            prefixIcon: Icons.person_outline_rounded,
-                                            textCapitalization: TextCapitalization.words,
-                                          ),
-                                          const SizedBox(height: AppTheme.spacingMd),
-                                        ],
-                                      )
-                                    : const SizedBox.shrink(),
-                              ),
-                              
-                              // Campo Email
-                              CustomInput(
-                                controller: _emailController,
-                                label: 'Email',
-                                hint: 'seu@email.com',
-                                prefixIcon: Icons.email_outlined,
-                                keyboardType: TextInputType.emailAddress,
-                                validator: (value) {
-                                  if (value == null || value.isEmpty) {
-                                    return 'Insira seu email';
-                                  }
-                                  if (!value.contains('@')) {
-                                    return 'Email inválido';
-                                  }
-                                  return null;
-                                },
-                              ),
-                              const SizedBox(height: AppTheme.spacingMd),
-                              
-                              // Campo Senha
-                              CustomInput(
-                                controller: _passwordController,
-                                label: 'Senha',
-                                hint: '••••••••',
-                                prefixIcon: Icons.lock_outline_rounded,
-                                obscureText: true,
-                                validator: (value) {
-                                  if (value == null || value.isEmpty) {
-                                    return 'Insira sua senha';
-                                  }
-                                  if (value.length < 6) {
-                                    return 'Mínimo 6 caracteres';
-                                  }
-                                  return null;
-                                },
-                              ),
-                              const SizedBox(height: AppTheme.spacingLg),
-                              
-                              // Mensagens de erro/sucesso
-                              if (_errorMessage != null)
-                                _buildMessage(
-                                  _errorMessage!,
-                                  isError: true,
-                                ),
-                              if (_successMessage != null)
-                                _buildMessage(
-                                  _successMessage!,
-                                  isError: false,
-                                ),
-                              
-                              // Botão principal
-                              CustomButton(
-                                label: _isSignUp ? 'Criar Conta' : 'Entrar',
-                                onPressed: _isLoading ? null : _handleSubmit,
-                                isLoading: _isLoading,
-                                isExpanded: true,
-                                size: ButtonSize.large,
-                              ),
-                              const SizedBox(height: AppTheme.spacingMd),
-                              
-                              // Divider
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Container(
-                                      height: 1,
-                                      color: AppTheme.surfaceHighlight,
-                                    ),
-                                  ),
-                                  Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: AppTheme.spacingMd,
-                                    ),
-                                    child: Text(
-                                      'ou',
-                                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                        color: AppTheme.textTertiary,
-                                      ),
-                                    ),
-                                  ),
-                                  Expanded(
-                                    child: Container(
-                                      height: 1,
-                                      color: AppTheme.surfaceHighlight,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: AppTheme.spacingMd),
-                              
-                              // Toggle Sign In / Sign Up
-                              CustomButton(
-                                label: _isSignUp
-                                    ? 'Já tenho uma conta'
-                                    : 'Criar uma conta',
-                                onPressed: _isLoading
-                                    ? null
-                                    : () {
-                                        setState(() {
-                                          _isSignUp = !_isSignUp;
-                                          _errorMessage = null;
-                                          _successMessage = null;
-                                        });
-                                      },
-                                variant: ButtonVariant.ghost,
-                                isExpanded: true,
-                              ),
-                            ],
-                          ),
+                      // Nome (apenas no signup)
+                      if (_isSignUp) ...[
+                        _buildTextField(
+                          controller: _nameController,
+                          hint: 'Your name',
+                          icon: Icons.person_outline,
                         ),
-                      ),
+                        const SizedBox(height: 16),
+                      ],
                       
-                      // Footer
-                      const SizedBox(height: AppTheme.spacingXl),
-                      FadeSlideIn(
-                        delay: const Duration(milliseconds: 400),
-                        child: Text(
-                          '© 2026 Trashtalk Records',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: AppTheme.textTertiary,
+                      // Email
+                      _buildTextField(
+                        controller: _emailController,
+                        hint: 'Email address',
+                        icon: Icons.mail_outline,
+                        keyboardType: TextInputType.emailAddress,
+                        validator: (value) {
+                          if (value == null || value.isEmpty) {
+                            return 'Enter your email';
+                          }
+                          if (!value.contains('@')) {
+                            return 'Enter a valid email';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      
+                      // Senha
+                      _buildTextField(
+                        controller: _passwordController,
+                        hint: 'Password',
+                        icon: Icons.lock_outline,
+                        obscure: _obscurePassword,
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                            color: Colors.white38,
                           ),
+                          onPressed: () {
+                            setState(() => _obscurePassword = !_obscurePassword);
+                          },
                         ),
+                        validator: (value) {
+                          if (value == null || value.isEmpty) {
+                            return 'Enter your password';
+                          }
+                          if (_isSignUp && value.length < 6) {
+                            return 'Password must be at least 6 characters';
+                          }
+                          return null;
+                        },
                       ),
                     ],
                   ),
                 ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildLogo() {
-    return AnimatedBuilder(
-      animation: _logoAnimation,
-      builder: (context, child) {
-        return Transform.scale(
-          scale: _logoAnimation.value,
-          child: child,
-        );
-      },
-      child: Column(
-        children: [
-          // Ícone com glow
-          Container(
-            width: 100,
-            height: 100,
-            decoration: BoxDecoration(
-              gradient: AppTheme.primaryGradient,
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: AppTheme.primary.withOpacity(0.4),
-                  blurRadius: 30,
-                  spreadRadius: 0,
+                const SizedBox(height: 24),
+                
+                // Erro
+                if (_errorMessage != null)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.redAccent.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.redAccent.withOpacity(0.3)),
+                    ),
+                    child: Text(
+                      _errorMessage!,
+                      style: const TextStyle(color: Colors.redAccent, fontSize: 14),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                
+                // Sucesso
+                if (_successMessage != null)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.greenAccent.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.greenAccent.withOpacity(0.3)),
+                    ),
+                    child: Text(
+                      _successMessage!,
+                      style: const TextStyle(color: Colors.greenAccent, fontSize: 14),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                
+                const SizedBox(height: 24),
+                
+                // Botão principal
+                SizedBox(
+                  width: double.infinity,
+                  height: 56,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(28),
+                      gradient: _isLoading ? null : const LinearGradient(
+                        colors: [Color(0xFFE91E8C), Color(0xFFFF6EC7)],
+                      ),
+                      boxShadow: _isLoading ? null : [
+                        BoxShadow(
+                          color: const Color(0xFFE91E8C).withOpacity(0.4),
+                          blurRadius: 20,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: ElevatedButton(
+                      onPressed: _isLoading ? null : _handleSubmit,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.transparent,
+                        foregroundColor: Colors.white,
+                        shadowColor: Colors.transparent,
+                        disabledBackgroundColor: const Color(0xFFE91E8C).withOpacity(0.3),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(28),
+                        ),
+                      ),
+                    child: _isLoading
+                        ? const SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2,
+                            ),
+                          )
+                        : Text(
+                            _isSignUp ? 'Create Account' : 'Sign In',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                
+                // Alternar entre login e signup
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      _isSignUp
+                          ? 'Already have an account?'
+                          : "Don't have an account?",
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.5),
+                        fontSize: 14,
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        setState(() {
+                          _isSignUp = !_isSignUp;
+                          _errorMessage = null;
+                          _successMessage = null;
+                        });
+                      },
+                      child: Text(
+                        _isSignUp ? 'Sign In' : 'Sign Up',
+                        style: const TextStyle(
+                          color: Color(0xFFE91E8C),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
-            child: const Icon(
-              Icons.headset_rounded,
-              size: 48,
-              color: AppTheme.surface,
-            ),
           ),
-          const SizedBox(height: AppTheme.spacingMd),
-          
-          // Nome
-          ShaderMask(
-            shaderCallback: (bounds) => AppTheme.primaryGradient.createShader(bounds),
-            child: Text(
-              'TRASHTALK',
-              style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                fontWeight: FontWeight.w800,
-                letterSpacing: 4,
-                color: Colors.white,
-              ),
-            ),
-          ),
-          Text(
-            'RECORDS',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              letterSpacing: 8,
-              color: AppTheme.textTertiary,
-              fontWeight: FontWeight.w300,
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
 
-  Widget _buildMessage(String message, {required bool isError}) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: AppTheme.spacingMd),
-      padding: const EdgeInsets.all(AppTheme.spacingMd),
-      decoration: BoxDecoration(
-        color: (isError ? AppTheme.error : AppTheme.success).withOpacity(0.1),
-        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-        border: Border.all(
-          color: (isError ? AppTheme.error : AppTheme.success).withOpacity(0.3),
+  Widget _buildTextField({
+    required TextEditingController controller,
+    required String hint,
+    required IconData icon,
+    bool obscure = false,
+    Widget? suffixIcon,
+    TextInputType? keyboardType,
+    String? Function(String?)? validator,
+  }) {
+    return TextFormField(
+      controller: controller,
+      obscureText: obscure,
+      keyboardType: keyboardType,
+      validator: validator,
+      style: const TextStyle(color: Colors.white),
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+        prefixIcon: Icon(icon, color: Colors.white38),
+        suffixIcon: suffixIcon,
+        filled: true,
+        fillColor: const Color(0xFF1E1E1E),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
         ),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            isError 
-                ? Icons.error_outline_rounded 
-                : Icons.check_circle_outline_rounded,
-            color: isError ? AppTheme.error : AppTheme.success,
-            size: 20,
-          ),
-          const SizedBox(width: AppTheme.spacingSm),
-          Expanded(
-            child: Text(
-              message,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: isError ? AppTheme.error : AppTheme.success,
-              ),
-            ),
-          ),
-        ],
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0xFFE91E8C)),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Colors.redAccent),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Colors.redAccent),
+        ),
+        errorStyle: const TextStyle(color: Colors.redAccent),
       ),
     );
   }

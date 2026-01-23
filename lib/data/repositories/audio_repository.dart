@@ -9,14 +9,14 @@ import '../models/audio_version.dart';
 class AudioRepository {
   final _supabase = SupabaseConfig.client;
 
-  /// Busca todas as versões de um projeto
+  /// Busca todas as versões de um projeto (ordenadas por data de criação)
   Future<List<AudioVersion>> getVersionsByProject(String projectId) async {
     try {
       final response = await _supabase
           .from('audio_versions')
           .select()
           .eq('project_id', projectId)
-          .order('created_at', ascending: false);
+          .order('created_at', ascending: true); // Mais antigo primeiro = ordem da playlist
 
       final versionsData = response as List<dynamic>;
       return versionsData

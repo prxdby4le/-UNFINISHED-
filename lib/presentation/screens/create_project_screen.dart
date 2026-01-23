@@ -1,12 +1,8 @@
 // lib/presentation/screens/create_project_screen.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../core/theme/app_theme.dart';
-import '../../core/theme/app_animations.dart';
 import '../providers/project_provider.dart';
-import '../widgets/common/gradient_background.dart';
-import '../widgets/common/custom_input.dart';
-import '../widgets/common/custom_button.dart';
+import 'project_detail_screen.dart';
 
 class CreateProjectScreen extends StatefulWidget {
   const CreateProjectScreen({super.key});
@@ -20,18 +16,7 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
   final _nameController = TextEditingController();
   final _descriptionController = TextEditingController();
   bool _isLoading = false;
-  int _selectedColorIndex = 0;
-
-  final List<Color> _projectColors = [
-    AppTheme.primary,
-    AppTheme.secondary,
-    const Color(0xFF00B8FF),
-    const Color(0xFFFF6B35),
-    const Color(0xFF9B59B6),
-    const Color(0xFF1ABC9C),
-    const Color(0xFFE74C3C),
-    const Color(0xFF3498DB),
-  ];
+  String? _errorMessage;
 
   @override
   void dispose() {
@@ -40,47 +25,35 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
     super.dispose();
   }
 
-  Future<void> _createProject() async {
+  Future<void> _handleCreate() async {
     if (!_formKey.currentState!.validate()) return;
 
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
 
     try {
-      await context.read<ProjectProvider>().createProject(
+      final project = await context.read<ProjectProvider>().createProject(
         name: _nameController.text.trim(),
-        description: _descriptionController.text.trim().isEmpty 
-            ? null 
+        description: _descriptionController.text.trim().isEmpty
+            ? null
             : _descriptionController.text.trim(),
       );
 
-      if (mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.check_circle_rounded, color: AppTheme.success),
-                const SizedBox(width: 12),
-                const Text('Projeto criado com sucesso!'),
-              ],
-            ),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: AppTheme.surfaceElevated,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-            ),
+      if (mounted && project != null) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => ProjectDetailScreen(projectId: project.id),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Erro ao criar projeto: $e'),
-            backgroundColor: AppTheme.error,
-          ),
-        );
-        setState(() => _isLoading = false);
+        setState(() {
+          _errorMessage = 'Failed to create project. Please try again.';
+          _isLoading = false;
+        });
       }
     }
   }
@@ -88,224 +61,263 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      extendBodyBehindAppBar: true,
+      backgroundColor: const Color(0xFF121212),
       appBar: AppBar(
-        backgroundColor: Colors.transparent,
+        backgroundColor: const Color(0xFF121212),
         elevation: 0,
-        leading: IconBtn(
-          icon: Icons.close_rounded,
+        leading: IconButton(
           onPressed: () => Navigator.pop(context),
-          size: 44,
+          icon: const Icon(Icons.close, color: Colors.white70),
         ),
-        title: Text(
-          'Novo Projeto',
-          style: Theme.of(context).textTheme.titleMedium,
+        title: const Text(
+          'New Project',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 18,
+            fontWeight: FontWeight.w600,
+          ),
         ),
         centerTitle: true,
-      ),
-      body: GradientBackground(
-        child: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(AppTheme.spacingLg),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const SizedBox(height: AppTheme.spacingMd),
-                  
-                  // Ícone do projeto (preview)
-                  FadeSlideIn(
-                    child: Center(
-                      child: _buildProjectPreview(),
+        actions: [
+          TextButton(
+            onPressed: _isLoading ? null : _handleCreate,
+            child: _isLoading
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      color: Color(0xFFE91E8C),
+                      strokeWidth: 2,
+                    ),
+                  )
+                : const Text(
+                    'Create',
+                    style: TextStyle(
+                      color: Color(0xFFE91E8C),
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                  const SizedBox(height: AppTheme.spacing2xl),
-                  
-                  // Seletor de cor
-                  FadeSlideIn(
-                    delay: const Duration(milliseconds: 100),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Cover image placeholder
+              Center(
+                child: GestureDetector(
+                  onTap: () {
+                    // TODO: Pick cover image
+                  },
+                  child: Container(
+                    width: 180,
+                    height: 180,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(24),
+                      gradient: const LinearGradient(
+                        colors: [
+                          Color(0xFFE91E8C),
+                          Color(0xFFFF6EC7),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFFE91E8C).withOpacity(0.4),
+                          blurRadius: 30,
+                          offset: const Offset(0, 10),
+                        ),
+                      ],
+                    ),
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Text(
-                          'Cor do Projeto',
-                          style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                            color: AppTheme.textSecondary,
+                        Container(
+                          width: 60,
+                          height: 60,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.white.withOpacity(0.2),
+                          ),
+                          child: Icon(
+                            Icons.add_photo_alternate_outlined,
+                            size: 28,
+                            color: Colors.white.withOpacity(0.9),
                           ),
                         ),
-                        const SizedBox(height: AppTheme.spacingMd),
-                        _buildColorSelector(),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Add Cover',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.9),
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: AppTheme.spacingLg),
-                  
-                  // Campo nome
-                  FadeSlideIn(
-                    delay: const Duration(milliseconds: 200),
-                    child: CustomInput(
-                      controller: _nameController,
-                      label: 'Nome do Projeto',
-                      hint: 'Ex: EP Summer 2026',
-                      prefixIcon: Icons.folder_rounded,
-                      textCapitalization: TextCapitalization.words,
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Digite um nome para o projeto';
-                        }
-                        return null;
-                      },
-                    ),
+                ),
+              ),
+              const SizedBox(height: 40),
+              
+              // Nome do projeto
+              const Text(
+                'Project Name',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _nameController,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  hintText: 'Enter project name...',
+                  hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+                  filled: true,
+                  fillColor: const Color(0xFF1E1E1E),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    borderSide: BorderSide.none,
                   ),
-                  const SizedBox(height: AppTheme.spacingMd),
-                  
-                  // Campo descrição
-                  FadeSlideIn(
-                    delay: const Duration(milliseconds: 300),
-                    child: CustomInput(
-                      controller: _descriptionController,
-                      label: 'Descrição (opcional)',
-                      hint: 'Adicione detalhes sobre o projeto...',
-                      prefixIcon: Icons.notes_rounded,
-                      maxLines: 3,
-                      textCapitalization: TextCapitalization.sentences,
-                    ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
                   ),
-                  const SizedBox(height: AppTheme.spacing2xl),
-                  
-                  // Botão criar
-                  FadeSlideIn(
-                    delay: const Duration(milliseconds: 400),
-                    child: CustomButton(
-                      label: 'Criar Projeto',
-                      onPressed: _isLoading ? null : _createProject,
-                      isLoading: _isLoading,
-                      isExpanded: true,
-                      size: ButtonSize.large,
-                      icon: Icons.add_rounded,
-                    ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    borderSide: const BorderSide(color: Color(0xFFE91E8C), width: 2),
                   ),
-                  const SizedBox(height: AppTheme.spacingMd),
-                  
-                  // Dica
-                  FadeSlideIn(
-                    delay: const Duration(milliseconds: 500),
-                    child: Container(
-                      padding: const EdgeInsets.all(AppTheme.spacingMd),
-                      decoration: BoxDecoration(
-                        color: AppTheme.surfaceHighlight.withOpacity(0.5),
-                        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-                        border: Border.all(
-                          color: AppTheme.surfaceHighlight,
-                        ),
+                  errorBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    borderSide: const BorderSide(color: Colors.redAccent),
+                  ),
+                ),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Please enter a project name';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 24),
+              
+              // Descrição
+              const Text(
+                'Description (Optional)',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _descriptionController,
+                style: const TextStyle(color: Colors.white),
+                maxLines: 4,
+                decoration: InputDecoration(
+                  hintText: 'Add a description...',
+                  hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+                  filled: true,
+                  fillColor: const Color(0xFF1E1E1E),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    borderSide: BorderSide.none,
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    borderSide: const BorderSide(color: Color(0xFFE91E8C), width: 2),
+                  ),
+                ),
+              ),
+              
+              // Erro
+              if (_errorMessage != null) ...[
+                const SizedBox(height: 24),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.redAccent.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.redAccent.withOpacity(0.3)),
+                  ),
+                  child: Text(
+                    _errorMessage!,
+                    style: const TextStyle(color: Colors.redAccent, fontSize: 14),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ],
+              
+              const SizedBox(height: 48),
+              
+              // Botão de criar (alternativo)
+              SizedBox(
+                width: double.infinity,
+                height: 56,
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(28),
+                    gradient: _isLoading ? null : const LinearGradient(
+                      colors: [Color(0xFFE91E8C), Color(0xFFFF6EC7)],
+                    ),
+                    boxShadow: _isLoading ? null : [
+                      BoxShadow(
+                        color: const Color(0xFFE91E8C).withOpacity(0.4),
+                        blurRadius: 20,
+                        offset: const Offset(0, 8),
                       ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.lightbulb_outline_rounded,
-                            color: AppTheme.primary,
-                            size: 20,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              'Após criar o projeto, você poderá fazer upload de versões de áudio.',
-                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: AppTheme.textSecondary,
-                              ),
+                    ],
+                  ),
+                  child: ElevatedButton(
+                    onPressed: _isLoading ? null : _handleCreate,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.transparent,
+                      foregroundColor: Colors.white,
+                      shadowColor: Colors.transparent,
+                      disabledBackgroundColor: const Color(0xFFE91E8C).withOpacity(0.3),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(28),
+                      ),
+                    ),
+                    child: _isLoading
+                        ? const SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2,
+                            ),
+                          )
+                        : const Text(
+                            'Create Project',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
-                        ],
-                      ),
-                    ),
                   ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildProjectPreview() {
-    final color = _projectColors[_selectedColorIndex];
-    
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeOutCubic,
-      width: 120,
-      height: 120,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            color.withOpacity(0.3),
-            color.withOpacity(0.1),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(AppTheme.radiusXl),
-        border: Border.all(
-          color: color.withOpacity(0.5),
-          width: 2,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: color.withOpacity(0.3),
-            blurRadius: 30,
-            spreadRadius: -5,
-          ),
-        ],
-      ),
-      child: Icon(
-        Icons.folder_special_rounded,
-        size: 56,
-        color: color,
-      ),
-    );
-  }
-
-  Widget _buildColorSelector() {
-    return Wrap(
-      spacing: 12,
-      runSpacing: 12,
-      children: List.generate(_projectColors.length, (index) {
-        final color = _projectColors[index];
-        final isSelected = _selectedColorIndex == index;
-        
-        return ScaleOnTap(
-          onTap: () => setState(() => _selectedColorIndex = index),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: color,
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: isSelected ? Colors.white : Colors.transparent,
-                width: 3,
-              ),
-              boxShadow: isSelected ? [
-                BoxShadow(
-                  color: color.withOpacity(0.5),
-                  blurRadius: 12,
-                  spreadRadius: -2,
                 ),
-              ] : null,
-            ),
-            child: isSelected
-                ? const Icon(
-                    Icons.check_rounded,
-                    color: Colors.white,
-                    size: 24,
-                  )
-                : null,
+              ),
+            ],
           ),
-        );
-      }),
+        ),
+      ),
     );
   }
 }

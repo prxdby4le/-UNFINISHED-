@@ -1,13 +1,8 @@
 // lib/presentation/screens/upload_audio_screen.dart
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
-import '../../core/theme/app_theme.dart';
-import '../../core/theme/app_animations.dart';
 import '../../data/repositories/audio_repository.dart';
-import '../widgets/common/gradient_background.dart';
-import '../widgets/common/custom_input.dart';
-import '../widgets/common/custom_button.dart';
-import '../widgets/common/glass_card.dart';
 
 class UploadAudioScreen extends StatefulWidget {
   final String projectId;
@@ -26,10 +21,9 @@ class _UploadAudioScreenState extends State<UploadAudioScreen> {
   PlatformFile? _selectedFile;
   bool _isLoading = false;
   bool _isMaster = false;
-  double _uploadProgress = 0;
   String? _errorMessage;
-
-  final List<String> _allowedExtensions = ['wav', 'flac', 'mp3', 'aiff', 'm4a'];
+  double _uploadProgress = 0;
+  bool _isDragging = false;
 
   @override
   void dispose() {
@@ -42,30 +36,24 @@ class _UploadAudioScreenState extends State<UploadAudioScreen> {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: _allowedExtensions,
-        withData: true,
+        allowedExtensions: ['wav', 'flac', 'mp3', 'aiff', 'm4a'],
+        withData: kIsWeb,
       );
 
       if (result != null && result.files.isNotEmpty) {
-        final file = result.files.first;
-        
         setState(() {
-          _selectedFile = file;
-          _errorMessage = null;
-          
-          // Preencher nome automaticamente se vazio
+          _selectedFile = result.files.first;
           if (_nameController.text.isEmpty) {
-            final nameWithoutExt = file.name.replaceAll(
-              RegExp(r'\.(wav|flac|mp3|aiff|m4a)$', caseSensitive: false),
-              '',
-            );
+            // Auto-fill name from file
+            final fileName = _selectedFile!.name;
+            final nameWithoutExt = fileName.split('.').first;
             _nameController.text = nameWithoutExt;
           }
         });
       }
     } catch (e) {
       setState(() {
-        _errorMessage = 'Erro ao selecionar arquivo: $e';
+        _errorMessage = 'Failed to pick file: $e';
       });
     }
   }
@@ -73,479 +61,514 @@ class _UploadAudioScreenState extends State<UploadAudioScreen> {
   Future<void> _handleUpload() async {
     if (!_formKey.currentState!.validate()) return;
     if (_selectedFile == null) {
-      setState(() => _errorMessage = 'Selecione um arquivo de áudio');
+      setState(() => _errorMessage = 'Please select a file first');
       return;
     }
 
     setState(() {
       _isLoading = true;
-      _uploadProgress = 0;
       _errorMessage = null;
+      _uploadProgress = 0;
     });
 
     try {
       final audioRepo = AudioRepository();
       
-      // Simular progresso de upload
-      for (int i = 0; i < 5; i++) {
-        await Future.delayed(const Duration(milliseconds: 200));
-        if (mounted) {
-          setState(() => _uploadProgress = (i + 1) * 0.15);
-        }
+      List<int>? fileBytes;
+      if (kIsWeb) {
+        fileBytes = _selectedFile!.bytes;
+      } else {
+        // Mobile/Desktop: use bytes if available
+        fileBytes = _selectedFile!.bytes;
+      }
+
+      if (fileBytes == null) {
+        throw Exception('Could not read file bytes');
       }
 
       await audioRepo.uploadAudioFromBytes(
         projectId: widget.projectId,
+        fileBytes: fileBytes,
         fileName: _selectedFile!.name,
-        fileBytes: _selectedFile!.bytes!.toList(),
         name: _nameController.text.trim(),
-        description: _descriptionController.text.trim().isEmpty 
-            ? null 
+        description: _descriptionController.text.trim().isEmpty
+            ? null
             : _descriptionController.text.trim(),
         isMaster: _isMaster,
+        onProgress: (progress) {
+          setState(() => _uploadProgress = progress);
+        },
       );
 
       if (mounted) {
-        setState(() => _uploadProgress = 1.0);
-        await Future.delayed(const Duration(milliseconds: 500));
-        
-        Navigator.pop(context);
+        Navigator.pop(context, true);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.check_circle_rounded, color: AppTheme.success),
-                const SizedBox(width: 12),
-                const Text('Upload realizado com sucesso!'),
-              ],
-            ),
+            content: const Text('Upload successful!'),
+            backgroundColor: const Color(0xFF1E1E1E),
             behavior: SnackBarBehavior.floating,
-            backgroundColor: AppTheme.surfaceElevated,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-            ),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
         setState(() {
-          _errorMessage = 'Erro no upload: $e';
+          _errorMessage = 'Upload failed: ${e.toString().split(':').last.trim()}';
           _isLoading = false;
-          _uploadProgress = 0;
         });
       }
     }
   }
 
+  String _formatFileSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      extendBodyBehindAppBar: true,
+      backgroundColor: const Color(0xFF121212),
       appBar: AppBar(
-        backgroundColor: Colors.transparent,
+        backgroundColor: const Color(0xFF121212),
         elevation: 0,
-        leading: IconBtn(
-          icon: Icons.close_rounded,
+        leading: IconButton(
           onPressed: () => Navigator.pop(context),
-          size: 44,
+          icon: const Icon(Icons.close, color: Colors.white70),
         ),
-        title: Text(
-          'Upload de Áudio',
-          style: Theme.of(context).textTheme.titleMedium,
+        title: const Text(
+          'Upload Audio',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 18,
+            fontWeight: FontWeight.w600,
+          ),
         ),
         centerTitle: true,
       ),
-      body: GradientBackground(
-        child: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(AppTheme.spacingLg),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const SizedBox(height: AppTheme.spacingMd),
-                  
-                  // Área de seleção de arquivo
-                  FadeSlideIn(
-                    child: _buildFileSelector(),
-                  ),
-                  const SizedBox(height: AppTheme.spacingLg),
-                  
-                  // Informações do arquivo selecionado
-                  if (_selectedFile != null)
-                    FadeSlideIn(
-                      delay: const Duration(milliseconds: 100),
-                      child: _buildFileInfo(),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // File picker area with drag and drop
+              DragTarget<Object>(
+                onWillAcceptWithDetails: (details) {
+                  setState(() => _isDragging = true);
+                  return true;
+                },
+                onLeave: (data) {
+                  setState(() => _isDragging = false);
+                },
+                onAcceptWithDetails: (details) {
+                  setState(() => _isDragging = false);
+                  // O drag and drop no Flutter Web precisa de tratamento especial
+                  // Por enquanto, mostrar mensagem para usar o seletor de arquivos
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Use o botão para selecionar arquivos'),
+                      backgroundColor: Color(0xFF1E1E1E),
                     ),
-                  
-                  const SizedBox(height: AppTheme.spacingLg),
-                  
-                  // Campo nome
-                  FadeSlideIn(
-                    delay: const Duration(milliseconds: 200),
-                    child: CustomInput(
-                      controller: _nameController,
-                      label: 'Nome da Versão',
-                      hint: 'Ex: Mix Final, Master V2',
-                      prefixIcon: Icons.label_outline_rounded,
-                      textCapitalization: TextCapitalization.words,
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Digite um nome para a versão';
-                        }
-                        return null;
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: AppTheme.spacingMd),
-                  
-                  // Campo descrição
-                  FadeSlideIn(
-                    delay: const Duration(milliseconds: 300),
-                    child: CustomInput(
-                      controller: _descriptionController,
-                      label: 'Descrição (opcional)',
-                      hint: 'Notas sobre esta versão...',
-                      prefixIcon: Icons.notes_rounded,
-                      maxLines: 2,
-                      textCapitalization: TextCapitalization.sentences,
-                    ),
-                  ),
-                  const SizedBox(height: AppTheme.spacingLg),
-                  
-                  // Toggle Master
-                  FadeSlideIn(
-                    delay: const Duration(milliseconds: 400),
-                    child: _buildMasterToggle(),
-                  ),
-                  const SizedBox(height: AppTheme.spacingLg),
-                  
-                  // Mensagem de erro
-                  if (_errorMessage != null)
-                    FadeSlideIn(
-                      child: Container(
-                        padding: const EdgeInsets.all(AppTheme.spacingMd),
-                        decoration: BoxDecoration(
-                          color: AppTheme.error.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-                          border: Border.all(color: AppTheme.error.withOpacity(0.3)),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.error_outline, color: AppTheme.error),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                _errorMessage!,
-                                style: TextStyle(color: AppTheme.error),
-                              ),
-                            ),
-                          ],
+                  );
+                },
+                builder: (context, candidateData, rejectedData) {
+                  return GestureDetector(
+                    onTap: _isLoading ? null : _pickFile,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      width: double.infinity,
+                      height: 180,
+                      decoration: BoxDecoration(
+                        color: _isDragging 
+                            ? const Color(0xFFE91E8C).withOpacity(0.1)
+                            : const Color(0xFF1E1E1E),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: _isDragging
+                              ? const Color(0xFFE91E8C)
+                              : _selectedFile != null
+                                  ? const Color(0xFFE91E8C).withOpacity(0.5)
+                                  : Colors.white.withOpacity(0.1),
+                          width: _isDragging || _selectedFile != null ? 2 : 1,
+                          style: _isDragging ? BorderStyle.solid : BorderStyle.solid,
                         ),
                       ),
+                      child: _selectedFile != null
+                          ? _buildSelectedFile()
+                          : _buildFilePlaceholder(),
                     ),
-                  
-                  // Barra de progresso
-                  if (_isLoading)
-                    FadeSlideIn(
-                      child: _buildProgressIndicator(),
-                    ),
-                  
-                  const SizedBox(height: AppTheme.spacingLg),
-                  
-                  // Botão upload
-                  FadeSlideIn(
-                    delay: const Duration(milliseconds: 500),
-                    child: CustomButton(
-                      label: _isLoading ? 'Enviando...' : 'Fazer Upload',
-                      onPressed: (_isLoading || _selectedFile == null) 
-                          ? null 
-                          : _handleUpload,
-                      isLoading: _isLoading,
-                      isExpanded: true,
-                      size: ButtonSize.large,
-                      icon: Icons.cloud_upload_rounded,
-                    ),
-                  ),
-                  
-                  const SizedBox(height: AppTheme.spacingLg),
-                  
-                  // Formatos suportados
-                  FadeSlideIn(
-                    delay: const Duration(milliseconds: 600),
-                    child: _buildSupportedFormats(),
-                  ),
-                ],
+                  );
+                },
               ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFileSelector() {
-    return ScaleOnTap(
-      onTap: _isLoading ? null : _pickFile,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        height: 180,
-        decoration: BoxDecoration(
-          color: _selectedFile != null
-              ? AppTheme.primary.withOpacity(0.1)
-              : AppTheme.surfaceVariant,
-          borderRadius: BorderRadius.circular(AppTheme.radiusXl),
-          border: Border.all(
-            color: _selectedFile != null
-                ? AppTheme.primary.withOpacity(0.5)
-                : AppTheme.surfaceHighlight,
-            width: 2,
-            strokeAlign: BorderSide.strokeAlignCenter,
-          ),
-        ),
-        child: _selectedFile != null
-            ? Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Container(
-                    width: 64,
-                    height: 64,
-                    decoration: BoxDecoration(
-                      gradient: AppTheme.primaryGradient,
-                      borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-                      boxShadow: AppTheme.glowPrimary,
-                    ),
-                    child: const Icon(
-                      Icons.audiotrack_rounded,
-                      size: 32,
-                      color: AppTheme.surface,
-                    ),
+              const SizedBox(height: 32),
+              
+              // Nome da versão
+              const Text(
+                'Version Name',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _nameController,
+                style: const TextStyle(color: Colors.white),
+                decoration: _inputDecoration('e.g., Mix 1, Final Master...'),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Please enter a name';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 24),
+              
+              // Descrição
+              const Text(
+                'Notes (Optional)',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _descriptionController,
+                style: const TextStyle(color: Colors.white),
+                maxLines: 3,
+                decoration: _inputDecoration('Add notes about this version...'),
+              ),
+              const SizedBox(height: 24),
+              
+              // Master toggle
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E1E1E),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: _isMaster
+                        ? const Color(0xFFFFD700).withOpacity(0.5)
+                        : Colors.white.withOpacity(0.1),
                   ),
-                  const SizedBox(height: 12),
-                  Text(
-                    _selectedFile!.name,
-                    style: Theme.of(context).textTheme.titleSmall,
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: _isMaster
+                            ? const Color(0xFFFFD700).withOpacity(0.2)
+                            : Colors.white.withOpacity(0.05),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(
+                        Icons.star_rounded,
+                        color: _isMaster
+                            ? const Color(0xFFFFD700)
+                            : Colors.white38,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Master Version',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          Text(
+                            'Mark as the final/master version',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.4),
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Switch(
+                      value: _isMaster,
+                      onChanged: (value) => setState(() => _isMaster = value),
+                      activeColor: const Color(0xFFFFD700),
+                    ),
+                  ],
+                ),
+              ),
+              
+              // Erro
+              if (_errorMessage != null) ...[
+                const SizedBox(height: 24),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.redAccent.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.redAccent.withOpacity(0.3)),
+                  ),
+                  child: Text(
+                    _errorMessage!,
+                    style: const TextStyle(color: Colors.redAccent, fontSize: 14),
                     textAlign: TextAlign.center,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Toque para alterar',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: AppTheme.primary,
+                ),
+              ],
+              
+              const SizedBox(height: 32),
+              
+              // Progress bar durante upload
+              if (_isLoading) ...[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: _uploadProgress > 0 ? _uploadProgress : null,
+                    backgroundColor: Colors.white12,
+                    valueColor: const AlwaysStoppedAnimation(Color(0xFFE91E8C)),
+                    minHeight: 4,
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+              
+              // Botão de upload
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton.icon(
+                  onPressed: _isLoading ? null : _handleUpload,
+                  icon: _isLoading
+                      ? const SizedBox.shrink()
+                      : const Icon(Icons.upload_rounded),
+                  label: _isLoading
+                      ? const Text('Uploading...')
+                      : const Text('Upload'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFE91E8C),
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor: const Color(0xFFE91E8C).withOpacity(0.5),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(30),
                     ),
                   ),
-                ],
-              )
-            : Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Container(
-                    width: 64,
-                    height: 64,
-                    decoration: BoxDecoration(
-                      color: AppTheme.surfaceHighlight,
-                      borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-                    ),
-                    child: const Icon(
-                      Icons.add_rounded,
-                      size: 32,
-                      color: AppTheme.textTertiary,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Selecionar arquivo de áudio',
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      color: AppTheme.textSecondary,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'WAV, FLAC, MP3, AIFF, M4A',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: AppTheme.textTertiary,
-                    ),
-                  ),
-                ],
+                ),
               ),
+              
+              const SizedBox(height: 24),
+              
+              // Formatos suportados
+              Center(
+                child: Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 8,
+                  children: ['WAV', 'FLAC', 'MP3', 'AIFF', 'M4A'].map((format) {
+                    final isLossless = ['WAV', 'FLAC', 'AIFF'].contains(format);
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: isLossless
+                            ? const Color(0xFFE91E8C).withOpacity(0.1)
+                            : Colors.white.withOpacity(0.05),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(
+                          color: isLossless
+                              ? const Color(0xFFE91E8C).withOpacity(0.3)
+                              : Colors.white.withOpacity(0.1),
+                        ),
+                      ),
+                      child: Text(
+                        format,
+                        style: TextStyle(
+                          color: isLossless
+                              ? const Color(0xFFE91E8C)
+                              : Colors.white54,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
 
-  Widget _buildFileInfo() {
-    final sizeInMB = (_selectedFile!.size / (1024 * 1024)).toStringAsFixed(1);
-    final extension = _selectedFile!.extension?.toUpperCase() ?? 'N/A';
+  Widget _buildFilePlaceholder() {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Container(
+          width: 72,
+          height: 72,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                const Color(0xFFE91E8C).withOpacity(0.2),
+                const Color(0xFFE91E8C).withOpacity(0.1),
+              ],
+            ),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Icon(
+            _isDragging ? Icons.file_download_rounded : Icons.audio_file_rounded,
+            color: const Color(0xFFE91E8C),
+            size: 32,
+          ),
+        ),
+        const SizedBox(height: 16),
+        Text(
+          _isDragging ? 'Solte o arquivo aqui' : 'Clique ou arraste um arquivo',
+          style: TextStyle(
+            color: _isDragging ? const Color(0xFFE91E8C) : Colors.white70,
+            fontSize: 15,
+            fontWeight: _isDragging ? FontWeight.w600 : FontWeight.normal,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.high_quality_rounded,
+                size: 14,
+                color: Colors.white.withOpacity(0.4),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                'WAV • FLAC • MP3 • AIFF • M4A',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.4),
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSelectedFile() {
+    final extension = _selectedFile!.name.split('.').last.toUpperCase();
+    final isLossless = ['WAV', 'FLAC', 'AIFF'].contains(extension);
     
-    return GlassCard(
-      padding: const EdgeInsets.all(AppTheme.spacingMd),
+    return Padding(
+      padding: const EdgeInsets.all(20),
       child: Row(
         children: [
+          // Icon
           Container(
-            width: 48,
-            height: 48,
+            width: 56,
+            height: 56,
             decoration: BoxDecoration(
-              color: AppTheme.surfaceHighlight,
-              borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-            ),
-            child: Center(
-              child: Text(
-                extension,
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: AppTheme.primary,
-                ),
+              gradient: const LinearGradient(
+                colors: [Color(0xFFE91E8C), Color(0xFF9C27B0)],
               ),
+              borderRadius: BorderRadius.circular(12),
             ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  'Arquivo selecionado',
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: AppTheme.textTertiary,
+                  extension,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
                   ),
-                ),
-                Text(
-                  '$sizeInMB MB',
-                  style: Theme.of(context).textTheme.titleSmall,
                 ),
               ],
             ),
           ),
-          IconBtn(
-            icon: Icons.close_rounded,
+          const SizedBox(width: 16),
+          
+          // Info
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Text(
+                      'Selected file',
+                      style: TextStyle(
+                        color: Colors.white54,
+                        fontSize: 12,
+                      ),
+                    ),
+                    if (isLossless) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFD700).withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: const Text(
+                          'LOSSLESS',
+                          style: TextStyle(
+                            color: Color(0xFFFFD700),
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _selectedFile!.name,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _formatFileSize(_selectedFile!.size),
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.4),
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          
+          // Remove button
+          IconButton(
             onPressed: () => setState(() => _selectedFile = null),
-            size: 36,
-            color: AppTheme.textTertiary,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMasterToggle() {
-    return ScaleOnTap(
-      onTap: () => setState(() => _isMaster = !_isMaster),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.all(AppTheme.spacingMd),
-        decoration: BoxDecoration(
-          color: _isMaster 
-              ? AppTheme.gold.withOpacity(0.1) 
-              : AppTheme.surfaceVariant,
-          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-          border: Border.all(
-            color: _isMaster 
-                ? AppTheme.gold.withOpacity(0.5) 
-                : AppTheme.surfaceHighlight,
-            width: _isMaster ? 2 : 1,
-          ),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: _isMaster 
-                    ? AppTheme.gold 
-                    : AppTheme.surfaceHighlight,
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                Icons.star_rounded,
-                color: _isMaster ? Colors.black87 : AppTheme.textTertiary,
-                size: 24,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Versão Master',
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      color: _isMaster ? AppTheme.gold : null,
-                    ),
-                  ),
-                  Text(
-                    'Marcar como versão final/principal',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: AppTheme.textTertiary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              width: 48,
-              height: 28,
-              decoration: BoxDecoration(
-                color: _isMaster ? AppTheme.gold : AppTheme.surfaceHighlight,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: AnimatedAlign(
-                duration: const Duration(milliseconds: 200),
-                alignment: _isMaster 
-                    ? Alignment.centerRight 
-                    : Alignment.centerLeft,
-                child: Container(
-                  width: 24,
-                  height: 24,
-                  margin: const EdgeInsets.symmetric(horizontal: 2),
-                  decoration: BoxDecoration(
-                    color: _isMaster ? Colors.black87 : AppTheme.textTertiary,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildProgressIndicator() {
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: AppTheme.spacingMd),
-      child: Column(
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Enviando...',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: AppTheme.textSecondary,
-                ),
-              ),
-              Text(
-                '${(_uploadProgress * 100).toInt()}%',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: AppTheme.primary,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: LinearProgressIndicator(
-              value: _uploadProgress,
-              backgroundColor: AppTheme.surfaceHighlight,
-              valueColor: const AlwaysStoppedAnimation(AppTheme.primary),
-              minHeight: 8,
+            icon: Icon(
+              Icons.close_rounded,
+              color: Colors.white.withOpacity(0.4),
             ),
           ),
         ],
@@ -553,90 +576,27 @@ class _UploadAudioScreenState extends State<UploadAudioScreen> {
     );
   }
 
-  Widget _buildSupportedFormats() {
-    return Container(
-      padding: const EdgeInsets.all(AppTheme.spacingMd),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceHighlight.withOpacity(0.5),
-        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+  InputDecoration _inputDecoration(String hint) {
+    return InputDecoration(
+      hintText: hint,
+      hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+      filled: true,
+      fillColor: const Color(0xFF1E1E1E),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide.none,
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(
-                Icons.info_outline_rounded,
-                size: 16,
-                color: AppTheme.textTertiary,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                'Formatos suportados',
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: AppTheme.textTertiary,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _FormatChip(label: 'WAV', isLossless: true),
-              _FormatChip(label: 'FLAC', isLossless: true),
-              _FormatChip(label: 'AIFF', isLossless: true),
-              _FormatChip(label: 'MP3', isLossless: false),
-              _FormatChip(label: 'M4A', isLossless: false),
-            ],
-          ),
-        ],
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
       ),
-    );
-  }
-}
-
-class _FormatChip extends StatelessWidget {
-  final String label;
-  final bool isLossless;
-
-  const _FormatChip({required this.label, required this.isLossless});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: isLossless 
-            ? AppTheme.success.withOpacity(0.1) 
-            : AppTheme.surfaceVariant,
-        borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-        border: Border.all(
-          color: isLossless 
-              ? AppTheme.success.withOpacity(0.3) 
-              : AppTheme.surfaceHighlight,
-        ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Color(0xFFE91E8C)),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            label,
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: isLossless ? AppTheme.success : AppTheme.textSecondary,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          if (isLossless) ...[
-            const SizedBox(width: 4),
-            Icon(
-              Icons.check_circle_rounded,
-              size: 12,
-              color: AppTheme.success,
-            ),
-          ],
-        ],
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Colors.redAccent),
       ),
     );
   }

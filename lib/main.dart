@@ -76,7 +76,7 @@ class TrashtalkApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => ProjectProvider()),
-        Provider(create: (_) => AudioPlayerProvider()),
+        ChangeNotifierProvider(create: (_) => AudioPlayerProvider()),
       ],
       child: MaterialApp(
         title: 'Trashtalk Records',

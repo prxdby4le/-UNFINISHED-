@@ -1,15 +1,14 @@
 // lib/presentation/screens/project_detail_screen.dart
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import '../../core/theme/app_theme.dart';
-import '../../core/theme/app_animations.dart';
 import '../../data/repositories/project_repository.dart';
 import '../../data/repositories/audio_repository.dart';
+import '../../data/repositories/library_repository.dart';
 import '../../data/models/project.dart';
 import '../../data/models/audio_version.dart';
 import '../providers/audio_player_provider.dart';
-import '../widgets/common/gradient_background.dart';
-import '../widgets/common/custom_button.dart';
 import 'upload_audio_screen.dart';
 import 'player_screen.dart';
 
@@ -22,737 +21,701 @@ class ProjectDetailScreen extends StatefulWidget {
   State<ProjectDetailScreen> createState() => _ProjectDetailScreenState();
 }
 
-class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
+class _ProjectDetailScreenState extends State<ProjectDetailScreen> 
+    with TickerProviderStateMixin {
   Project? _project;
   List<AudioVersion> _versions = [];
   bool _isLoading = true;
-  String? _errorMessage;
+  bool _isInLibrary = false;
+  bool _isTogglingLibrary = false;
+  final _libraryRepo = LibraryRepository();
+  
+  // Cor dinâmica baseada na capa
+  Color _dominantColor = const Color(0xFF1E88E5);
+  
+  late AnimationController _colorController;
 
   @override
   void initState() {
     super.initState();
+    _colorController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    );
     _loadData();
   }
 
+  @override
+  void dispose() {
+    _colorController.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadData() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
+    if (!mounted) return;
+    setState(() => _isLoading = true);
 
     try {
       final projectRepo = ProjectRepository();
       final audioRepo = AudioRepository();
 
-      final project = await projectRepo.getProjectById(widget.projectId);
-      final versions = await audioRepo.getVersionsByProject(widget.projectId);
+      final results = await Future.wait([
+        projectRepo.getProjectById(widget.projectId),
+        audioRepo.getVersionsByProject(widget.projectId),
+        _libraryRepo.isInLibrary(widget.projectId),
+      ]);
 
       if (mounted) {
         setState(() {
-          _project = project;
-          _versions = versions;
+          _project = results[0] as Project?;
+          _versions = results[1] as List<AudioVersion>;
+          _isInLibrary = results[2] as bool;
           _isLoading = false;
+          
+          // Gerar cor baseada no nome do projeto (simulação)
+          _dominantColor = _generateProjectColor(_project?.name ?? '');
         });
+        _colorController.forward();
       }
     } catch (e) {
       if (mounted) {
-        setState(() {
-          _errorMessage = 'Erro ao carregar dados: $e';
-          _isLoading = false;
-        });
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+  
+  // Gera uma cor única baseada no nome do projeto
+  Color _generateProjectColor(String name) {
+    if (name.isEmpty) return const Color(0xFF1E88E5);
+    
+    final hash = name.hashCode;
+    final hue = (hash % 360).abs().toDouble();
+    return HSLColor.fromAHSL(1.0, hue, 0.6, 0.4).toColor();
+  }
+
+  Future<void> _toggleLibrary() async {
+    if (_isTogglingLibrary || !mounted) return;
+    
+    HapticFeedback.lightImpact();
+    setState(() => _isTogglingLibrary = true);
+    
+    try {
+      if (_isInLibrary) {
+        await _libraryRepo.removeFromLibrary(widget.projectId);
+        if (mounted) {
+          setState(() => _isInLibrary = false);
+        }
+      } else {
+        await _libraryRepo.addToLibrary(widget.projectId);
+        if (mounted) {
+          setState(() => _isInLibrary = true);
+        }
+      }
+    } catch (e) {
+      // Ignore
+    } finally {
+      if (mounted) {
+        setState(() => _isTogglingLibrary = false);
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      extendBodyBehindAppBar: true,
-      body: GradientBackground(
-        child: CustomScrollView(
-          slivers: [
-            // App Bar com efeito
-            _buildSliverAppBar(),
-            
-            // Conteúdo
-            if (_isLoading)
-              const SliverFillRemaining(
-                child: Center(
-                  child: SpinAnimation(
-                    child: Icon(
-                      Icons.album_rounded,
-                      size: 48,
-                      color: AppTheme.primary,
-                    ),
-                  ),
-                ),
-              )
-            else if (_errorMessage != null)
-              SliverFillRemaining(
-                child: _buildError(),
-              )
-            else ...[
-              // Header do projeto
-              SliverToBoxAdapter(
-                child: FadeSlideIn(
-                  child: _buildProjectHeader(),
-                ),
-              ),
-              
-              // Título da seção
-              SliverToBoxAdapter(
-                child: FadeSlideIn(
-                  delay: const Duration(milliseconds: 100),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(
-                      AppTheme.spacingLg,
-                      AppTheme.spacingLg,
-                      AppTheme.spacingLg,
-                      AppTheme.spacingMd,
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'Versões de Áudio',
-                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        if (_versions.isNotEmpty)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 6,
-                            ),
-                            decoration: BoxDecoration(
-                              color: AppTheme.primary.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(AppTheme.radiusFull),
-                              border: Border.all(
-                                color: AppTheme.primary.withOpacity(0.3),
-                              ),
-                            ),
-                            child: Text(
-                              '${_versions.length}',
-                              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                                color: AppTheme.primary,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              
-              // Lista de versões ou estado vazio
-              if (_versions.isEmpty)
-                SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: _buildEmptyState(),
-                )
-              else
-                SliverList(
-                  delegate: SliverChildBuilderDelegate(
-                    (context, index) {
-                      final version = _versions[index];
-                      return FadeSlideIn(
-                        delay: Duration(milliseconds: 50 * index),
-                        child: _AudioTrackCard(
-                          version: version,
-                          isPlaying: _isTrackPlaying(version.id),
-                          onTap: () => _playTrack(version),
-                        ),
-                      );
-                    },
-                    childCount: _versions.length,
-                  ),
-                ),
-              
-              // Espaço para o player
-              const SliverToBoxAdapter(
-                child: SizedBox(height: 120),
+    if (_isLoading) {
+      return Scaffold(
+        backgroundColor: const Color(0xFF0A0A0F),
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(color: _dominantColor),
+              const SizedBox(height: 16),
+              Text(
+                'Carregando projeto...',
+                style: TextStyle(color: Colors.white.withOpacity(0.5)),
               ),
             ],
-          ],
-        ),
-      ),
-      
-      // Mini player
-      bottomNavigationBar: Consumer<AudioPlayerProvider>(
-        builder: (context, playerProvider, child) {
-          if (playerProvider.currentProjectId != widget.projectId ||
-              playerProvider.currentVersions?.isEmpty == true) {
-            return const SizedBox.shrink();
-          }
-          return _MiniPlayer(
-            playerProvider: playerProvider,
-            onTap: () => _openFullPlayer(),
-          );
-        },
-      ),
-      
-      // FAB
-      floatingActionButton: FadeSlideIn(
-        delay: const Duration(milliseconds: 300),
-        offset: const Offset(0, 20),
-        child: GradientFab(
-          icon: Icons.upload_rounded,
-          tooltip: 'Upload de áudio',
-          onPressed: () => _navigateToUpload(),
-        ),
-      ),
-    );
-  }
-
-  SliverAppBar _buildSliverAppBar() {
-    return SliverAppBar(
-      expandedHeight: 200,
-      pinned: true,
-      backgroundColor: AppTheme.surface.withOpacity(0.9),
-      leading: IconBtn(
-        icon: Icons.arrow_back_rounded,
-        onPressed: () => Navigator.pop(context),
-        size: 40,
-      ),
-      actions: [
-        if (_versions.isNotEmpty)
-          Consumer<AudioPlayerProvider>(
-            builder: (context, playerProvider, _) {
-              if (playerProvider.currentProjectId == widget.projectId) {
-                return IconBtn(
-                  icon: Icons.equalizer_rounded,
-                  onPressed: _openFullPlayer,
-                  color: AppTheme.primary,
-                  size: 40,
-                  tooltip: 'Player',
-                );
-              }
-              return const SizedBox.shrink();
-            },
           ),
-        IconBtn(
-          icon: Icons.more_vert_rounded,
-          onPressed: () => _showOptionsMenu(),
-          size: 40,
         ),
-        const SizedBox(width: 8),
-      ],
-      flexibleSpace: FlexibleSpaceBar(
-        background: Stack(
-          fit: StackFit.expand,
-          children: [
-            // Background gradient
-            Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    AppTheme.primary.withOpacity(0.2),
-                    AppTheme.surface,
-                  ],
-                ),
-              ),
-            ),
-            // Padrão decorativo
-            Positioned(
-              top: -50,
-              right: -50,
-              child: Container(
-                width: 200,
-                height: 200,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: RadialGradient(
-                    colors: [
-                      AppTheme.primary.withOpacity(0.3),
-                      Colors.transparent,
+      );
+    }
+
+    if (_project == null) {
+      return Scaffold(
+        backgroundColor: const Color(0xFF0A0A0F),
+        appBar: AppBar(backgroundColor: Colors.transparent),
+        body: const Center(
+          child: Text('Projeto não encontrado', style: TextStyle(color: Colors.white70)),
+        ),
+      );
+    }
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF0A0A0F),
+      body: Stack(
+        children: [
+          // Background gradient baseado na cor dominante
+          _buildDynamicBackground(),
+          
+          // Conteúdo principal
+          CustomScrollView(
+            physics: const BouncingScrollPhysics(),
+            slivers: [
+              // App Bar com gradiente
+              _buildSliverAppBar(),
+              
+              // Conteúdo
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 24),
+                      _buildTracksList(),
+                      const SizedBox(height: 120), // Espaço para mini-player
                     ],
                   ),
                 ),
               ),
-            ),
-            // Ícone central
-            Center(
-              child: Container(
-                width: 80,
-                height: 80,
-                decoration: BoxDecoration(
-                  gradient: AppTheme.primaryGradient,
-                  borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-                  boxShadow: AppTheme.glowPrimary,
-                ),
-                child: const Icon(
-                  Icons.album_rounded,
-                  size: 40,
-                  color: AppTheme.surface,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildProjectHeader() {
-    return Padding(
-      padding: const EdgeInsets.all(AppTheme.spacingLg),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            _project?.name ?? 'Projeto',
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          if (_project?.description != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              _project!.description!,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: AppTheme.textSecondary,
-              ),
-            ),
-          ],
-          const SizedBox(height: AppTheme.spacingMd),
-          
-          // Stats
-          Row(
-            children: [
-              _StatChip(
-                icon: Icons.audiotrack_rounded,
-                label: '${_versions.length} versões',
-              ),
-              const SizedBox(width: 12),
-              _StatChip(
-                icon: Icons.calendar_today_rounded,
-                label: _formatDate(_project?.createdAt ?? DateTime.now()),
-              ),
             ],
           ),
           
-          // Botão Play All
-          if (_versions.isNotEmpty) ...[
-            const SizedBox(height: AppTheme.spacingLg),
-            CustomButton(
-              label: 'Reproduzir Tudo',
-              icon: Icons.play_arrow_rounded,
-              onPressed: _playAll,
-              isExpanded: true,
-            ),
-          ],
+          // Mini-player fixo na parte inferior
+          _buildMiniPlayer(),
         ],
       ),
     );
   }
 
-  Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            width: 100,
-            height: 100,
+  Widget _buildDynamicBackground() {
+    return AnimatedBuilder(
+      animation: _colorController,
+      builder: (context, child) {
+        return Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                _dominantColor.withOpacity(0.3 * _colorController.value),
+                _dominantColor.withOpacity(0.1 * _colorController.value),
+                const Color(0xFF0A0A0F),
+                const Color(0xFF0A0A0F),
+              ],
+              stops: const [0.0, 0.2, 0.5, 1.0],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildSliverAppBar() {
+    final totalDuration = _versions.fold<Duration>(
+      Duration.zero,
+      (prev, v) => prev + Duration(seconds: v.durationSeconds ?? 0),
+    );
+    
+    return SliverAppBar(
+      expandedHeight: 380,
+      pinned: true,
+      stretch: true,
+      backgroundColor: Colors.transparent,
+      leading: IconButton(
+        icon: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.3),
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
+        ),
+        onPressed: () => Navigator.pop(context),
+      ),
+      actions: [
+        IconButton(
+          icon: Container(
+            padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: AppTheme.surfaceHighlight,
+              color: Colors.black.withOpacity(0.3),
               shape: BoxShape.circle,
             ),
-            child: const Icon(
-              Icons.music_off_rounded,
-              size: 48,
-              color: AppTheme.textTertiary,
-            ),
+            child: const Icon(Icons.share_outlined, color: Colors.white, size: 20),
           ),
-          const SizedBox(height: AppTheme.spacingLg),
-          Text(
-            'Nenhuma versão de áudio',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Faça upload da primeira versão!',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: AppTheme.textTertiary,
-            ),
-          ),
-          const SizedBox(height: AppTheme.spacingLg),
-          CustomButton(
-            label: 'Fazer Upload',
-            icon: Icons.upload_rounded,
-            onPressed: _navigateToUpload,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildError() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.error_outline, size: 64, color: AppTheme.error),
-          const SizedBox(height: 16),
-          Text(
-            _errorMessage!,
-            textAlign: TextAlign.center,
-            style: TextStyle(color: AppTheme.textSecondary),
-          ),
-          const SizedBox(height: 16),
-          CustomButton(
-            label: 'Tentar novamente',
-            onPressed: _loadData,
-            variant: ButtonVariant.outline,
-          ),
-        ],
-      ),
-    );
-  }
-
-  bool _isTrackPlaying(String versionId) {
-    final provider = context.read<AudioPlayerProvider>();
-    if (provider.currentProjectId != widget.projectId) return false;
-    final versions = provider.currentVersions;
-    if (versions == null || versions.isEmpty) return false;
-    // Simplificado - pode precisar ajustar baseado no currentIndex
-    return false;
-  }
-
-  Future<void> _playTrack(AudioVersion version) async {
-    final playerProvider = context.read<AudioPlayerProvider>();
-    
-    if (playerProvider.currentProjectId == widget.projectId) {
-      final versions = playerProvider.currentVersions;
-      if (versions != null) {
-        final index = versions.indexWhere((v) => v.id == version.id);
-        if (index != -1) {
-          await playerProvider.player.seek(Duration.zero, index: index);
-          await playerProvider.play();
-          return;
-        }
-      }
-    }
-    
-    final success = await playerProvider.loadProjectVersions(
-      projectId: widget.projectId,
-    );
-    
-    if (success && mounted) {
-      final versions = playerProvider.currentVersions;
-      if (versions != null) {
-        final index = versions.indexWhere((v) => v.id == version.id);
-        if (index != -1) {
-          await playerProvider.player.seek(Duration.zero, index: index);
-          await playerProvider.play();
-        }
-      }
-    }
-  }
-
-  Future<void> _playAll() async {
-    final playerProvider = context.read<AudioPlayerProvider>();
-    final success = await playerProvider.loadProjectVersions(
-      projectId: widget.projectId,
-    );
-    if (success) {
-      await playerProvider.play();
-    }
-  }
-
-  void _openFullPlayer() {
-    Navigator.of(context).push(
-      PageRouteBuilder(
-        pageBuilder: (context, animation, secondaryAnimation) =>
-            const PlayerScreen(),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return SlideTransition(
-            position: Tween<Offset>(
-              begin: const Offset(0, 1),
-              end: Offset.zero,
-            ).animate(CurvedAnimation(
-              parent: animation,
-              curve: Curves.easeOutCubic,
-            )),
-            child: child,
-          );
-        },
-        transitionDuration: const Duration(milliseconds: 300),
-      ),
-    );
-  }
-
-  void _navigateToUpload() {
-    Navigator.of(context).push(
-      PageRouteBuilder(
-        pageBuilder: (context, animation, secondaryAnimation) =>
-            UploadAudioScreen(projectId: widget.projectId),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return SlideTransition(
-            position: Tween<Offset>(
-              begin: const Offset(0, 1),
-              end: Offset.zero,
-            ).animate(CurvedAnimation(
-              parent: animation,
-              curve: Curves.easeOutCubic,
-            )),
-            child: child,
-          );
-        },
-        transitionDuration: const Duration(milliseconds: 300),
-      ),
-    ).then((_) => _loadData());
-  }
-
-  void _showOptionsMenu() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        decoration: const BoxDecoration(
-          color: AppTheme.surfaceVariant,
-          borderRadius: BorderRadius.vertical(
-            top: Radius.circular(AppTheme.radiusXl),
-          ),
+          onPressed: () {},
         ),
-        padding: const EdgeInsets.all(AppTheme.spacingLg),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: AppTheme.surfaceHighlight,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: AppTheme.spacingLg),
-            ListTile(
-              leading: const Icon(Icons.edit_rounded),
-              title: const Text('Editar projeto'),
-              onTap: () {
-                Navigator.pop(context);
-                // TODO: Implementar edição
-              },
-            ),
-            ListTile(
-              leading: Icon(Icons.delete_rounded, color: AppTheme.error),
-              title: Text('Excluir projeto', style: TextStyle(color: AppTheme.error)),
-              onTap: () {
-                Navigator.pop(context);
-                // TODO: Implementar exclusão
-              },
-            ),
-          ],
-        ),
+        const SizedBox(width: 8),
+      ],
+      flexibleSpace: FlexibleSpaceBar(
+        background: _buildHeader(totalDuration),
       ),
     );
   }
 
-  String _formatDate(DateTime date) {
-    return '${date.day}/${date.month}/${date.year}';
-  }
-}
-
-class _StatChip extends StatelessWidget {
-  final IconData icon;
-  final String label;
-
-  const _StatChip({required this.icon, required this.label});
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _buildHeader(Duration totalDuration) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceHighlight,
-        borderRadius: BorderRadius.circular(AppTheme.radiusFull),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
+      padding: const EdgeInsets.fromLTRB(20, 100, 20, 20),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.end,
         children: [
-          Icon(icon, size: 16, color: AppTheme.textSecondary),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              color: AppTheme.textSecondary,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _AudioTrackCard extends StatelessWidget {
-  final AudioVersion version;
-  final bool isPlaying;
-  final VoidCallback onTap;
-
-  const _AudioTrackCard({
-    required this.version,
-    required this.isPlaying,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return ScaleOnTap(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.symmetric(
-          horizontal: AppTheme.spacingMd,
-          vertical: AppTheme.spacingSm,
-        ),
-        decoration: BoxDecoration(
-          color: isPlaying 
-              ? AppTheme.primary.withOpacity(0.1) 
-              : AppTheme.surfaceVariant,
-          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-          border: Border.all(
-            color: isPlaying 
-                ? AppTheme.primary.withOpacity(0.5) 
-                : version.isMaster 
-                    ? AppTheme.gold.withOpacity(0.5) 
-                    : AppTheme.surfaceHighlight,
-            width: isPlaying || version.isMaster ? 2 : 1,
-          ),
-          boxShadow: isPlaying ? [
-            BoxShadow(
-              color: AppTheme.primary.withOpacity(0.15),
-              blurRadius: 16,
-              spreadRadius: -4,
-            ),
-          ] : null,
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(AppTheme.spacingMd),
-          child: Row(
+          // Capa e info lado a lado
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              // Botão de play
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  gradient: isPlaying
-                      ? AppTheme.primaryGradient
-                      : LinearGradient(
-                          colors: [
-                            AppTheme.surfaceHighlight,
-                            AppTheme.surfaceElevated,
-                          ],
-                        ),
-                  shape: BoxShape.circle,
-                  boxShadow: isPlaying ? AppTheme.glowPrimary : null,
-                ),
-                child: Icon(
-                  isPlaying 
-                      ? Icons.pause_rounded 
-                      : Icons.play_arrow_rounded,
-                  color: isPlaying 
-                      ? AppTheme.surface 
-                      : AppTheme.textPrimary,
-                  size: 24,
+              // Capa do álbum
+              Hero(
+                tag: 'cover_${widget.projectId}',
+                child: Container(
+                  width: 160,
+                  height: 160,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: _dominantColor.withOpacity(0.4),
+                        blurRadius: 30,
+                        offset: const Offset(0, 10),
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: _project?.coverImageUrl != null
+                        ? Image.network(
+                            _project!.coverImageUrl!,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => _buildPlaceholderCover(),
+                          )
+                        : _buildPlaceholderCover(),
+                  ),
                 ),
               ),
-              const SizedBox(width: AppTheme.spacingMd),
+              const SizedBox(width: 20),
               
               // Informações
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            version.name,
-                            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.w600,
-                              color: isPlaying ? AppTheme.primary : null,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        if (version.isMaster) ...[
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [
-                                  AppTheme.gold,
-                                  AppTheme.gold.withOpacity(0.8),
-                                ],
-                              ),
-                              borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-                            ),
-                            child: Text(
-                              'MASTER',
-                              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                                color: Colors.black87,
-                                fontWeight: FontWeight.w700,
-                                fontSize: 9,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                    if (version.description != null) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        version.description!,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: AppTheme.textTertiary,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                    Text(
+                      '${_versions.length} TRACKS · ${_formatDuration(totalDuration)}',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.6),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: 1,
                       ),
-                    ],
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        Icon(Icons.timer_outlined, 
-                            size: 12, 
-                            color: AppTheme.textTertiary),
-                        const SizedBox(width: 4),
-                        Text(
-                          version.formattedDuration,
-                          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                            color: AppTheme.textTertiary,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Icon(Icons.storage_outlined, 
-                            size: 12, 
-                            color: AppTheme.textTertiary),
-                        const SizedBox(width: 4),
-                        Text(
-                          version.formattedFileSize,
-                          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                            color: AppTheme.textTertiary,
-                          ),
-                        ),
-                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _project?.name ?? '',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                        height: 1.1,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _project?.description ?? '[UNFINISHED]',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.6),
+                        fontSize: 14,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ],
                 ),
               ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          
+          // Botões de ação
+          Row(
+            children: [
+              // Play button
+              Expanded(
+                child: _PlayButton(
+                  color: _dominantColor,
+                  onPressed: _playAll,
+                ),
+              ),
+              const SizedBox(width: 12),
               
-              const Icon(
-                Icons.more_vert_rounded,
-                color: AppTheme.textTertiary,
+              // Add to library
+              _ActionIcon(
+                icon: _isInLibrary ? Icons.check : Icons.add,
+                isActive: _isInLibrary,
+                color: _dominantColor,
+                onPressed: _toggleLibrary,
+                isLoading: _isTogglingLibrary,
+              ),
+              const SizedBox(width: 12),
+              
+              // Download
+              _ActionIcon(
+                icon: Icons.download_outlined,
+                color: _dominantColor,
+                onPressed: () {},
+              ),
+              const SizedBox(width: 12),
+              
+              // More options
+              _ActionIcon(
+                icon: Icons.more_horiz,
+                color: _dominantColor,
+                onPressed: () => _showMoreOptions(),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPlaceholderCover() {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            _dominantColor.withOpacity(0.8),
+            _dominantColor.withOpacity(0.4),
+          ],
+        ),
+      ),
+      child: Center(
+        child: Icon(
+          Icons.album,
+          size: 64,
+          color: Colors.white.withOpacity(0.5),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTracksList() {
+    if (_versions.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(40),
+        child: Column(
+          children: [
+            Icon(
+              Icons.music_off_outlined,
+              size: 64,
+              color: Colors.white.withOpacity(0.2),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Nenhuma faixa ainda',
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.5),
+                fontSize: 16,
+              ),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: () => _navigateToUpload(),
+              icon: const Icon(Icons.add),
+              label: const Text('Adicionar faixa'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _dominantColor,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Divider com linha
+        Container(
+          height: 1,
+          color: Colors.white.withOpacity(0.1),
+        ),
+        const SizedBox(height: 16),
+        
+        // Lista de tracks
+        ListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: _versions.length,
+          itemBuilder: (context, index) {
+            final version = _versions[index];
+            return _TrackTile(
+              index: index + 1,
+              version: version,
+              accentColor: _dominantColor,
+              onTap: () => _playTrack(version, index),
+              onMore: () => _showTrackOptions(version),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMiniPlayer() {
+    return Consumer<AudioPlayerProvider>(
+      builder: (context, playerProvider, _) {
+        final currentVersion = playerProvider.getCurrentVersion();
+        final isThisProject = playerProvider.currentProjectId == widget.projectId;
+        
+        if (currentVersion == null || !isThisProject) {
+          return const SizedBox.shrink();
+        }
+        
+        return Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: _MiniPlayerWidget(
+            version: currentVersion,
+            accentColor: _dominantColor,
+            onTap: () => _openFullPlayer(),
+          ),
+        );
+      },
+    );
+  }
+
+  void _playTrack(AudioVersion version, int index) async {
+    HapticFeedback.lightImpact();
+    final playerProvider = context.read<AudioPlayerProvider>();
+    
+    await playerProvider.loadProjectVersions(
+      projectId: widget.projectId,
+      startIndex: index,
+    );
+    await playerProvider.play();
+    
+    if (mounted) setState(() {});
+  }
+
+  void _playAll() async {
+    if (_versions.isEmpty) return;
+    HapticFeedback.mediumImpact();
+    
+    final playerProvider = context.read<AudioPlayerProvider>();
+    await playerProvider.loadProjectVersions(projectId: widget.projectId);
+    await playerProvider.play();
+    
+    if (mounted) setState(() {});
+  }
+
+  void _openFullPlayer() {
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => const PlayerScreen(),
+        transitionsBuilder: (_, animation, __, child) {
+          return SlideTransition(
+            position: Tween(
+              begin: const Offset(0, 1),
+              end: Offset.zero,
+            ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
+            child: child,
+          );
+        },
+        transitionDuration: const Duration(milliseconds: 400),
+      ),
+    );
+  }
+
+  void _navigateToUpload() async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => UploadAudioScreen(projectId: widget.projectId),
+      ),
+    );
+    if (result == true) {
+      _loadData();
+    }
+  }
+
+  void _showMoreOptions() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1A1A1F),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 12),
+          Container(
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(height: 20),
+          ListTile(
+            leading: Icon(Icons.add, color: _dominantColor),
+            title: const Text('Adicionar faixa', style: TextStyle(color: Colors.white)),
+            onTap: () {
+              Navigator.pop(context);
+              _navigateToUpload();
+            },
+          ),
+          ListTile(
+            leading: Icon(Icons.edit_outlined, color: _dominantColor),
+            title: const Text('Editar projeto', style: TextStyle(color: Colors.white)),
+            onTap: () => Navigator.pop(context),
+          ),
+          ListTile(
+            leading: Icon(Icons.share_outlined, color: _dominantColor),
+            title: const Text('Compartilhar', style: TextStyle(color: Colors.white)),
+            onTap: () => Navigator.pop(context),
+          ),
+          const SizedBox(height: 20),
+        ],
+      ),
+    );
+  }
+
+  void _showTrackOptions(AudioVersion version) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1A1A1F),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 12),
+          Container(
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(height: 20),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Row(
+              children: [
+                Container(
+                  width: 50,
+                  height: 50,
+                  decoration: BoxDecoration(
+                    color: _dominantColor.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(Icons.music_note, color: _dominantColor),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        version.name,
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Text(
+                        '${version.format?.toUpperCase() ?? 'WAV'} · ${version.formattedFileSize}',
+                        style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          ListTile(
+            leading: Icon(Icons.play_arrow, color: _dominantColor),
+            title: const Text('Reproduzir', style: TextStyle(color: Colors.white)),
+            onTap: () {
+              Navigator.pop(context);
+              final index = _versions.indexOf(version);
+              _playTrack(version, index);
+            },
+          ),
+          ListTile(
+            leading: Icon(Icons.download_outlined, color: _dominantColor),
+            title: const Text('Baixar', style: TextStyle(color: Colors.white)),
+            onTap: () => Navigator.pop(context),
+          ),
+          ListTile(
+            leading: const Icon(Icons.delete_outline, color: Colors.redAccent),
+            title: const Text('Excluir', style: TextStyle(color: Colors.redAccent)),
+            onTap: () => Navigator.pop(context),
+          ),
+          const SizedBox(height: 20),
+        ],
+      ),
+    );
+  }
+
+  String _formatDuration(Duration duration) {
+    final minutes = duration.inMinutes;
+    final seconds = duration.inSeconds % 60;
+    if (minutes >= 60) {
+      final hours = minutes ~/ 60;
+      final mins = minutes % 60;
+      return '${hours}h ${mins}m';
+    }
+    return '${minutes}:${seconds.toString().padLeft(2, '0')}';
+  }
+}
+
+// ==================== WIDGETS AUXILIARES ====================
+
+class _PlayButton extends StatelessWidget {
+  final Color color;
+  final VoidCallback onPressed;
+
+  const _PlayButton({required this.color, required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(24),
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(24),
+        child: Container(
+          height: 48,
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.play_arrow, color: Colors.black, size: 24),
+              SizedBox(width: 8),
+              Text(
+                'Play',
+                style: TextStyle(
+                  color: Colors.black,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ],
           ),
@@ -762,12 +725,243 @@ class _AudioTrackCard extends StatelessWidget {
   }
 }
 
-class _MiniPlayer extends StatelessWidget {
-  final AudioPlayerProvider playerProvider;
+class _ActionIcon extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final VoidCallback onPressed;
+  final bool isActive;
+  final bool isLoading;
+
+  const _ActionIcon({
+    required this.icon,
+    required this.color,
+    required this.onPressed,
+    this.isActive = false,
+    this.isLoading = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: isActive ? color.withOpacity(0.2) : Colors.white.withOpacity(0.1),
+      shape: const CircleBorder(),
+      child: InkWell(
+        onTap: onPressed,
+        customBorder: const CircleBorder(),
+        child: Container(
+          width: 48,
+          height: 48,
+          alignment: Alignment.center,
+          child: isLoading
+              ? SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: isActive ? color : Colors.white,
+                  ),
+                )
+              : Icon(
+                  icon,
+                  color: isActive ? color : Colors.white,
+                  size: 22,
+                ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TrackTile extends StatelessWidget {
+  final int index;
+  final AudioVersion version;
+  final Color accentColor;
+  final VoidCallback onTap;
+  final VoidCallback onMore;
+
+  const _TrackTile({
+    required this.index,
+    required this.version,
+    required this.accentColor,
+    required this.onTap,
+    required this.onMore,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final playerProvider = context.watch<AudioPlayerProvider>();
+    final currentVersion = playerProvider.getCurrentVersion();
+    final isPlaying = currentVersion?.id == version.id && playerProvider.isPlaying;
+    final isCurrentTrack = currentVersion?.id == version.id;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+          child: Row(
+            children: [
+              // Número ou animação
+              SizedBox(
+                width: 32,
+                child: isPlaying
+                    ? _PlayingAnimation(color: accentColor)
+                    : Text(
+                        '$index',
+                        style: TextStyle(
+                          color: isCurrentTrack ? accentColor : Colors.white.withOpacity(0.5),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+              ),
+              const SizedBox(width: 12),
+              
+              // Info da track
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      version.name,
+                      style: TextStyle(
+                        color: isCurrentTrack ? accentColor : Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        if (_isLossless(version.format)) ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: accentColor.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              'LOSSLESS',
+                              style: TextStyle(
+                                color: accentColor,
+                                fontSize: 8,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                        ],
+                        Text(
+                          version.format?.toUpperCase() ?? 'WAV',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.4),
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              
+              // Duração
+              Text(
+                version.formattedDuration,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.5),
+                  fontSize: 13,
+                ),
+              ),
+              const SizedBox(width: 8),
+              
+              // Menu
+              IconButton(
+                icon: Icon(Icons.more_horiz, color: Colors.white.withOpacity(0.5), size: 20),
+                onPressed: onMore,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  bool _isLossless(String? format) {
+    if (format == null) return false;
+    return ['wav', 'flac', 'aiff', 'alac'].contains(format.toLowerCase());
+  }
+}
+
+class _PlayingAnimation extends StatefulWidget {
+  final Color color;
+  const _PlayingAnimation({required this.color});
+
+  @override
+  State<_PlayingAnimation> createState() => _PlayingAnimationState();
+}
+
+class _PlayingAnimationState extends State<_PlayingAnimation>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: List.generate(3, (i) {
+            final delay = i * 0.2;
+            final value = math.sin((_controller.value + delay) * math.pi);
+            return Container(
+              width: 3,
+              height: 8 + (value.abs() * 8),
+              margin: const EdgeInsets.symmetric(horizontal: 1),
+              decoration: BoxDecoration(
+                color: widget.color,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            );
+          }),
+        );
+      },
+    );
+  }
+}
+
+// ==================== MINI PLAYER ====================
+
+class _MiniPlayerWidget extends StatelessWidget {
+  final AudioVersion version;
+  final Color accentColor;
   final VoidCallback onTap;
 
-  const _MiniPlayer({
-    required this.playerProvider,
+  const _MiniPlayerWidget({
+    required this.version,
+    required this.accentColor,
     required this.onTap,
   });
 
@@ -776,95 +970,250 @@ class _MiniPlayer extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        height: 72,
+        margin: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: AppTheme.surfaceVariant,
-          border: Border(
-            top: BorderSide(
-              color: AppTheme.surfaceHighlight,
-              width: 1,
+          color: const Color(0xFF1A1A1F),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.3),
+              blurRadius: 20,
+              offset: const Offset(0, -4),
             ),
-          ),
+          ],
         ),
-        child: SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Row(
-              children: [
-                // Thumbnail
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    gradient: AppTheme.primaryGradient,
-                    borderRadius: BorderRadius.circular(8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Waveform / Progress
+            _MiniWaveform(accentColor: accentColor),
+            
+            // Controls
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 8, 12),
+              child: Row(
+                children: [
+                  // Info
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          version.name,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          version.format?.toUpperCase() ?? 'WAV',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.5),
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                  child: const Icon(
-                    Icons.music_note_rounded,
-                    color: AppTheme.surface,
+                  
+                  // Controls
+                  Consumer<AudioPlayerProvider>(
+                    builder: (context, provider, _) {
+                      final isPlaying = provider.isPlaying;
+                      return Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.skip_previous, color: Colors.white),
+                            onPressed: provider.seekToPrevious,
+                            iconSize: 28,
+                          ),
+                          Container(
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              color: accentColor,
+                              shape: BoxShape.circle,
+                            ),
+                            child: IconButton(
+                              icon: Icon(
+                                isPlaying ? Icons.pause : Icons.play_arrow,
+                                color: Colors.white,
+                              ),
+                              onPressed: () {
+                                if (isPlaying) {
+                                  provider.pause();
+                                } else {
+                                  provider.play();
+                                }
+                              },
+                              iconSize: 24,
+                              padding: EdgeInsets.zero,
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.skip_next, color: Colors.white),
+                            onPressed: provider.seekToNext,
+                            iconSize: 28,
+                          ),
+                        ],
+                      );
+                    },
                   ),
-                ),
-                const SizedBox(width: 12),
-                
-                // Info
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        playerProvider.currentVersions?.firstOrNull?.name ?? 'Tocando',
-                        style: Theme.of(context).textTheme.titleSmall,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      StreamBuilder<Duration>(
-                        stream: playerProvider.positionStream,
-                        builder: (context, snapshot) {
-                          final position = snapshot.data ?? Duration.zero;
-                          return StreamBuilder<Duration?>(
-                            stream: playerProvider.durationStream,
-                            builder: (context, durSnapshot) {
-                              final duration = durSnapshot.data ?? Duration.zero;
-                              final progress = duration.inMilliseconds > 0
-                                  ? position.inMilliseconds / duration.inMilliseconds
-                                  : 0.0;
-                              return LinearProgressIndicator(
-                                value: progress.clamp(0.0, 1.0),
-                                backgroundColor: AppTheme.surfaceHighlight,
-                                valueColor: AlwaysStoppedAnimation(AppTheme.primary),
-                              );
-                            },
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 12),
-                
-                // Controls
-                IconBtn(
-                  icon: playerProvider.isPlaying 
-                      ? Icons.pause_rounded 
-                      : Icons.play_arrow_rounded,
-                  onPressed: () {
-                    if (playerProvider.isPlaying) {
-                      playerProvider.pause();
-                    } else {
-                      playerProvider.play();
-                    }
-                  },
-                  backgroundColor: AppTheme.primary,
-                  color: AppTheme.surface,
-                  size: 44,
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );
+  }
+}
+
+class _MiniWaveform extends StatelessWidget {
+  final Color accentColor;
+  const _MiniWaveform({required this.accentColor});
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<AudioPlayerProvider>(
+      builder: (context, provider, _) {
+        return StreamBuilder<Duration>(
+          stream: provider.positionStream,
+          builder: (context, posSnapshot) {
+            return StreamBuilder<Duration?>(
+              stream: provider.durationStream,
+              builder: (context, durSnapshot) {
+                final position = posSnapshot.data ?? Duration.zero;
+                final duration = durSnapshot.data ?? Duration.zero;
+                final progress = duration.inMilliseconds > 0
+                    ? position.inMilliseconds / duration.inMilliseconds
+                    : 0.0;
+
+                return Container(
+                  height: 32,
+                  margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: CustomPaint(
+                      size: const Size(double.infinity, 32),
+                      painter: _MiniWaveformPainter(
+                        progress: progress.clamp(0.0, 1.0),
+                        accentColor: accentColor,
+                        trackId: provider.getCurrentVersion()?.id,
+                      ),
+                    ),
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _MiniWaveformPainter extends CustomPainter {
+  final double progress;
+  final Color accentColor;
+  final String? trackId;
+
+  static final Map<String, List<double>> _waveCache = {};
+
+  _MiniWaveformPainter({
+    required this.progress,
+    required this.accentColor,
+    this.trackId,
+  });
+
+  List<double> get _waveData {
+    final key = trackId ?? 'default';
+    return _waveCache.putIfAbsent(key, () => _generateWave(key));
+  }
+
+  static List<double> _generateWave(String seed) {
+    final hash = seed.hashCode;
+    final random = _SeededRandom(hash);
+    
+    const count = 60;
+    final data = <double>[];
+    
+    for (int i = 0; i < count; i++) {
+      final pos = i / count;
+      double value;
+      
+      // Estrutura de música simulada
+      if (pos < 0.15) {
+        value = 0.3 + random.next() * 0.3;
+      } else if (pos < 0.3) {
+        value = 0.4 + random.next() * 0.4;
+      } else if (pos < 0.7) {
+        value = 0.6 + random.next() * 0.4;
+      } else if (pos < 0.85) {
+        value = 0.4 + random.next() * 0.35;
+      } else {
+        value = 0.25 + random.next() * 0.25;
+      }
+      
+      data.add(value.clamp(0.15, 1.0));
+    }
+    
+    return data;
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final barWidth = size.width / _waveData.length;
+    final progressX = size.width * progress;
+
+    for (int i = 0; i < _waveData.length; i++) {
+      final x = i * barWidth + barWidth / 2;
+      final barHeight = _waveData[i] * size.height * 0.9;
+      final isPlayed = x <= progressX;
+
+      final paint = Paint()
+        ..color = isPlayed ? accentColor : Colors.white.withOpacity(0.15)
+        ..style = PaintingStyle.fill;
+
+      final rect = RRect.fromRectAndRadius(
+        Rect.fromCenter(
+          center: Offset(x, size.height / 2),
+          width: barWidth * 0.6,
+          height: barHeight,
+        ),
+        const Radius.circular(2),
+      );
+      
+      canvas.drawRRect(rect, paint);
+    }
+
+    // Cursor
+    if (progress > 0.01 && progress < 0.99) {
+      final cursorPaint = Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.fill;
+      canvas.drawCircle(Offset(progressX, size.height / 2), 4, cursorPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _MiniWaveformPainter old) {
+    return progress != old.progress || trackId != old.trackId;
+  }
+}
+
+class _SeededRandom {
+  int _seed;
+  _SeededRandom(this._seed);
+  
+  double next() {
+    _seed = (_seed * 1103515245 + 12345) & 0x7fffffff;
+    return _seed / 0x7fffffff;
   }
 }
