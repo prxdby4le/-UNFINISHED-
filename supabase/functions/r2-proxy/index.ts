@@ -1,7 +1,7 @@
 // supabase/functions/r2-proxy/index.ts
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { S3Client, GetObjectCommand, PutObjectCommand } from "https://esm.sh/@aws-sdk/client-s3@3.490.0"
+import { getSignedUrl } from "https://esm.sh/@aws-sdk/s3-request-presigner@3.490.0"
 
 const R2_ACCOUNT_ID = Deno.env.get('R2_ACCOUNT_ID')
 const R2_ACCESS_KEY_ID = Deno.env.get('R2_ACCESS_KEY_ID')
@@ -29,21 +29,32 @@ const s3Client = R2_ACCOUNT_ID && R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY
     })
   : null
 
-// Headers CORS
+// Headers CORS - mais permissivos para garantir funcionamento
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'GET, PUT, POST, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, accept, origin',
+  'Access-Control-Allow-Methods': 'GET, PUT, POST, DELETE, OPTIONS, HEAD',
+  'Access-Control-Max-Age': '86400', // 24 horas
 }
 
 serve(async (req) => {
+  // Log de versão para confirmar que a nova versão está rodando
+  console.log('[R2-Proxy] ===== VERSION 2.0 - SIGNED URL MODE =====')
+  console.log('[R2-Proxy] Request method:', req.method)
+  console.log('[R2-Proxy] Request URL:', req.url)
+  
   // Try-catch global para garantir que TODOS os erros retornem headers CORS
   try {
-    // Tratar requisições OPTIONS (preflight)
+    // Tratar requisições OPTIONS (preflight) - DEVE SER A PRIMEIRA COISA
+    // O navegador faz isso antes de qualquer requisição real
     if (req.method === 'OPTIONS') {
+      console.log('[R2-Proxy] Handling OPTIONS preflight request');
       return new Response(null, {
-        status: 204,
-        headers: corsHeaders,
+        status: 200, // Mudando para 200 em vez de 204 para garantir compatibilidade
+        headers: {
+          ...corsHeaders,
+          'Content-Length': '0',
+        },
       })
     }
 
@@ -93,24 +104,21 @@ serve(async (req) => {
     }
 
     try {
-      // Criar cliente Supabase
-      const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-        auth: {
-          persistSession: false,
-          autoRefreshToken: false,
+      // Validar JWT usando a API do Supabase diretamente (sem dependência externa)
+      const validateResponse = await fetch(`${supabaseUrl}/auth/v1/user`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'apikey': supabaseAnonKey,
         },
       })
       
-      // Verificar se o token é válido passando explicitamente
-      const { data: { user }, error: authError } = await supabase.auth.getUser(token)
-      
-      if (authError) {
-        console.error('Auth error:', authError.message)
-        console.error('Token (first 20 chars):', token.substring(0, 20) + '...')
+      if (!validateResponse.ok) {
+        const errorData = await validateResponse.json().catch(() => ({}))
+        console.error('Auth validation failed:', validateResponse.status, errorData)
         return new Response(JSON.stringify({ 
           code: 401,
           message: 'Invalid JWT',
-          details: authError.message 
+          details: errorData.message || 'Token validation failed'
         }), {
           status: 401,
           headers: {
@@ -120,7 +128,9 @@ serve(async (req) => {
         })
       }
       
-      if (!user) {
+      const user = await validateResponse.json()
+      
+      if (!user || !user.id) {
         return new Response(JSON.stringify({ 
           code: 401,
           message: 'User not found'
@@ -181,39 +191,55 @@ serve(async (req) => {
 
     try {
       if (method === 'GET') {
-        // Download
-        const command = new GetObjectCommand({
-          Bucket: R2_BUCKET_NAME,
-          Key: key,
-        })
-        const response = await s3Client.send(command)
-        
-        // Converter stream para ArrayBuffer
-        const chunks: Uint8Array[] = []
-        if (response.Body) {
-          // @ts-ignore - Body pode ser um ReadableStream
-          for await (const chunk of response.Body) {
-            chunks.push(chunk)
+        try {
+          console.log('[R2-Proxy] GET request - Generating signed URL for key:', key)
+          console.log('[R2-Proxy] S3Client configured:', s3Client !== null)
+          
+          if (!s3Client) {
+            throw new Error('S3Client not configured - check R2 credentials')
           }
+          
+          const command = new GetObjectCommand({
+            Bucket: R2_BUCKET_NAME,
+            Key: key,
+          })
+      
+          console.log('[R2-Proxy] Calling getSignedUrl...')
+          // Gera uma URL segura válida por 1 hora (3600 segundos)
+          // O App vai usar essa URL para conectar DIRETO no R2
+          const signedUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 })
+          
+          console.log('[R2-Proxy] Signed URL generated successfully (length:', signedUrl.length, ')')
+          console.log('[R2-Proxy] Returning JSON response with signed URL')
+      
+          // Adicionar versão na resposta para debug
+          const responseBody = JSON.stringify({ 
+            url: signedUrl,
+            version: '2.0-signed-url',
+            timestamp: new Date().toISOString()
+          })
+          
+          console.log('[R2-Proxy] Response body:', responseBody.substring(0, 100) + '...')
+      
+          return new Response(responseBody, {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              ...corsHeaders,
+            },
+          })
+        } catch (error) {
+          console.error('[R2-Proxy] Error signing URL:', error)
+          console.error('[R2-Proxy] Error details:', error instanceof Error ? error.message : String(error))
+          return new Response(JSON.stringify({ 
+            error: 'Failed to sign URL',
+            details: error instanceof Error ? error.message : String(error)
+          }), {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          })
         }
-        
-        // Concatenar chunks
-        const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0)
-        const body = new Uint8Array(totalLength)
-        let offset = 0
-        for (const chunk of chunks) {
-          body.set(chunk, offset)
-          offset += chunk.length
-        }
-        
-        return new Response(body, {
-          headers: {
-            'Content-Type': response.ContentType || 'audio/wav',
-            'Content-Length': (response.ContentLength || body.length).toString(),
-            'Cache-Control': 'public, max-age=3600',
-            ...corsHeaders,
-          },
-        })
       } else if (method === 'PUT') {
         // Upload
         const body = await req.arrayBuffer()

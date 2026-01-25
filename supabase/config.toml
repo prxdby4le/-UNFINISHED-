@@ -385,7 +385,7 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 
 [functions.r2-proxy]
 enabled = true
-verify_jwt = true
+verify_jwt = false  # Desabilitado porque a função faz validação manual de JWT
 import_map = "./functions/r2-proxy/deno.json"
 # Uncomment to specify a custom file path to the entrypoint.
 # Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx

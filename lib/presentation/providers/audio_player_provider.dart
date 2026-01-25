@@ -1,12 +1,10 @@
-// lib/presentation/providers/audio_player_provider.dart
 import 'dart:async';
-import 'dart:typed_data';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
 import 'package:just_audio_background/just_audio_background.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../core/config/r2_config.dart';
 import '../../core/config/supabase_config.dart';
 import '../../data/models/audio_version.dart';
 
@@ -18,9 +16,6 @@ class AudioPlayerProvider extends ChangeNotifier {
   String? _currentProjectId;
   bool _isLoading = false;
   String? _loadingMessage;
-  
-  // Cache de áudio
-  final Map<String, Uint8List> _audioCache = {};
   
   bool get isLoading => _isLoading;
   String? get loadingMessage => _loadingMessage;
@@ -34,8 +29,6 @@ class AudioPlayerProvider extends ChangeNotifier {
     _audioPlayer.playerStateStream.listen((_) => notifyListeners());
     _audioPlayer.currentIndexStream.listen((index) {
       notifyListeners();
-      // Preload próximas faixas quando muda
-      if (index != null) _preloadNextTracks(index);
     });
     
     _audioPlayer.playbackEventStream.listen(
@@ -44,25 +37,20 @@ class AudioPlayerProvider extends ChangeNotifier {
     );
   }
   
-  /// Carrega versões - RÁPIDO: só carrega a faixa selecionada primeiro
+  /// Carrega versões usando URLs assinadas para streaming direto (MUITO mais rápido)
   Future<bool> loadProjectVersions({
     required String projectId,
     List<String>? versionIds,
     int startIndex = 0,
   }) async {
     try {
-      // Se já está no mesmo projeto com cache, só muda o índice
+      // Se já está no mesmo projeto, apenas muda o índice
       if (_currentProjectId == projectId && 
           _currentVersions != null && 
           _currentVersions!.isNotEmpty) {
-        // Verificar se a faixa está em cache
-        if (startIndex < _currentVersions!.length) {
-          final targetVersion = _currentVersions![startIndex];
-          if (_audioCache.containsKey(targetVersion.id)) {
-            await _audioPlayer.seek(Duration.zero, index: startIndex);
-            return true;
-          }
-        }
+        await _audioPlayer.seek(Duration.zero, index: startIndex);
+        if (!_audioPlayer.playing) await _audioPlayer.play();
+        return true;
       }
       
       _isLoading = true;
@@ -70,7 +58,7 @@ class AudioPlayerProvider extends ChangeNotifier {
       _currentProjectId = projectId;
       notifyListeners();
       
-      // Buscar versões
+      // Buscar versões no banco
       final response = await _supabase
           .from('audio_versions')
           .select('*')
@@ -96,33 +84,60 @@ class AudioPlayerProvider extends ChangeNotifier {
       
       notifyListeners();
       
-      // ============ CARREGAMENTO RÁPIDO ============
-      // Só carrega a faixa selecionada para começar rápido
-      final headers = _getAuthHeaders();
+      // ============ STREAMING DIRETO COM SIGNED URLS ============
+      _loadingMessage = 'Preparando streaming...';
+      notifyListeners();
       
-      if (kIsWeb) {
-        // Carregar apenas a faixa inicial
-        _loadingMessage = 'Carregando faixa...';
+      // Busca todas as URLs assinadas em paralelo (muito rápido)
+      List<String> signedUrls;
+      try {
+        signedUrls = await Future.wait(
+          _currentVersions!.map((v) => _getSignedUrl(v.fileUrl))
+        );
+      } catch (e) {
+        debugPrint('[AudioPlayer] Erro ao obter URLs assinadas: $e');
+        _isLoading = false;
+        _loadingMessage = 'Erro: ${e.toString()}';
         notifyListeners();
-        
-        final targetVersion = _currentVersions![startIndex];
-        if (!_audioCache.containsKey(targetVersion.id)) {
-          await _downloadTrack(targetVersion, headers);
-        }
+        return false;
       }
       
-      // Criar playlist
-      await _createPlaylist(startIndex);
+      // Cria a playlist com streaming direto
+      final List<AudioSource> sources = [];
+      
+      for (int i = 0; i < _currentVersions!.length; i++) {
+        final version = _currentVersions![i];
+        final url = signedUrls[i];
+        
+        sources.add(AudioSource.uri(
+          Uri.parse(url),
+          tag: MediaItem(
+            id: version.id,
+            title: version.name,
+            artist: '[UNFINISHED]',
+          ),
+        ));
+      }
+      
+      final playlist = ConcatenatingAudioSource(
+        children: sources,
+        useLazyPreparation: true,
+      );
+      
+      await _audioPlayer.setAudioSource(
+        playlist,
+        initialIndex: startIndex,
+        preload: true,
+      );
+      
+      await _audioPlayer.setLoopMode(LoopMode.all);
       
       _isLoading = false;
       _loadingMessage = null;
       notifyListeners();
       
-      // Preload das outras faixas em BACKGROUND (não bloqueia)
-      if (kIsWeb) {
-        _preloadRemainingTracks(startIndex, headers);
-      }
-      
+      // Auto play se necessário (geralmente setAudioSource já prepara, mas podemos garantir)
+      // O play é chamado pela UI ou aqui se quisermos auto-play
       return true;
     } catch (e) {
       debugPrint('[AudioPlayer] Error: $e');
@@ -133,122 +148,59 @@ class AudioPlayerProvider extends ChangeNotifier {
     }
   }
   
-  /// Cria playlist (usa cache se disponível, senão streaming)
-  Future<void> _createPlaylist(int startIndex) async {
-    if (_currentVersions == null || _currentVersions!.isEmpty) return;
+  /// Obtém URL assinada da Edge Function para acesso direto ao R2
+  Future<String> _getSignedUrl(String filePath) async {
+    if (filePath.startsWith('http')) return filePath;
     
-    final headers = _getAuthHeaders();
-    final List<AudioSource> sources = [];
-    
-    for (int i = 0; i < _currentVersions!.length; i++) {
-      final version = _currentVersions![i];
-      
-      if (kIsWeb) {
-        if (_audioCache.containsKey(version.id)) {
-          // Usar cache
-          sources.add(_CachedAudioSource(
-            bytes: _audioCache[version.id]!,
-            version: version,
-          ));
-        } else {
-          // Lazy loading - carrega quando precisar
-          sources.add(_LazyAudioSource(
-            version: version,
-            fileUrl: _buildR2ProxyUrl(version.fileUrl),
-            headers: headers,
-            cache: _audioCache,
-            onLoaded: () => notifyListeners(),
-          ));
-        }
-      } else {
-        // Mobile/Desktop - streaming direto
-        sources.add(AudioSource.uri(
-          Uri.parse(_buildR2ProxyUrl(version.fileUrl)),
-          headers: headers,
-          tag: MediaItem(
-            id: version.id,
-            title: version.name,
-            artist: '[UNFINISHED]',
-          ),
-        ));
-      }
-    }
-    
-    final playlist = ConcatenatingAudioSource(
-      children: sources,
-      useLazyPreparation: true, // Prepara sob demanda
-    );
-    
-    await _audioPlayer.setAudioSource(
-      playlist,
-      initialIndex: startIndex,
-      preload: true,
-    );
-    
-    // Loop da playlist
-    await _audioPlayer.setLoopMode(LoopMode.all);
-  }
-  
-  /// Preload das faixas restantes em background
-  void _preloadRemainingTracks(int currentIndex, Map<String, String> headers) {
-    if (_currentVersions == null) return;
-    
-    // Preload em ordem de prioridade: próximas primeiro
-    final indices = <int>[];
-    
-    // Próximas faixas
-    for (int i = currentIndex + 1; i < _currentVersions!.length; i++) {
-      indices.add(i);
-    }
-    // Faixas anteriores
-    for (int i = 0; i < currentIndex; i++) {
-      indices.add(i);
-    }
-    
-    // Download em background sem bloquear
-    for (final i in indices) {
-      final version = _currentVersions![i];
-      if (!_audioCache.containsKey(version.id)) {
-        _downloadTrack(version, headers).then((_) {
-          debugPrint('[AudioPlayer] Background loaded: ${version.name}');
-        });
-      }
-    }
-  }
-  
-  /// Preload das próximas faixas quando muda de track
-  void _preloadNextTracks(int currentIndex) {
-    if (_currentVersions == null || !kIsWeb) return;
-    
-    final headers = _getAuthHeaders();
-    
-    // Preload próximas 2 faixas
-    for (int i = 1; i <= 2; i++) {
-      final nextIndex = (currentIndex + i) % _currentVersions!.length;
-      final version = _currentVersions![nextIndex];
-      
-      if (!_audioCache.containsKey(version.id)) {
-        _downloadTrack(version, headers);
-      }
-    }
-  }
-  
-  /// Download de uma faixa
-  Future<void> _downloadTrack(AudioVersion version, Map<String, String> headers) async {
-    if (_audioCache.containsKey(version.id)) return;
+    // A rota da function deve incluir o caminho do arquivo
+    // Ex: https://xxx.supabase.co/functions/v1/r2-proxy/user/project/file.wav
+    final functionUrl = '${SupabaseConfig.supabaseUrl}/functions/v1/r2-proxy/$filePath';
     
     try {
-      final url = _buildR2ProxyUrl(version.fileUrl);
-      debugPrint('[AudioPlayer] Downloading: ${version.name}');
+      debugPrint('[AudioPlayer] Requesting signed URL from: $functionUrl');
+      final response = await http.get(
+        Uri.parse(functionUrl),
+        headers: _getAuthHeaders(),
+      );
       
-      final response = await http.get(Uri.parse(url), headers: headers);
+      debugPrint('[AudioPlayer] Response status: ${response.statusCode}');
+      debugPrint('[AudioPlayer] Response content-type: ${response.headers['content-type']}');
+      debugPrint('[AudioPlayer] Response body preview: ${response.body.substring(0, response.body.length > 100 ? 100 : response.body.length)}');
       
       if (response.statusCode == 200) {
-        _audioCache[version.id] = response.bodyBytes;
-        debugPrint('[AudioPlayer] Loaded: ${version.name} (${(response.bodyBytes.length / 1024 / 1024).toStringAsFixed(1)} MB)');
+        // Verificar se a resposta é JSON
+        final contentType = response.headers['content-type'] ?? '';
+        if (!contentType.contains('application/json')) {
+          throw Exception(
+            'Edge Function retornou dados binários em vez de JSON. '
+            'A função precisa ser deployada com a nova versão que retorna URLs assinadas. '
+            'Execute: supabase functions deploy r2-proxy --no-verify-jwt'
+          );
+        }
+        
+        try {
+          final data = jsonDecode(response.body);
+          if (data['url'] != null) {
+            debugPrint('[AudioPlayer] Signed URL obtained successfully');
+            return data['url'] as String;
+          } else {
+            throw Exception('Resposta não contém campo "url": ${response.body}');
+          }
+        } catch (jsonError) {
+          throw Exception(
+            'Erro ao decodificar JSON. A Edge Function pode estar retornando dados binários. '
+            'Resposta: ${response.body.substring(0, 200)}...'
+          );
+        }
+      } else {
+        final errorBody = response.body.length > 200 
+            ? '${response.body.substring(0, 200)}...' 
+            : response.body;
+        throw Exception('Falha ao assinar URL: ${response.statusCode} - $errorBody');
       }
     } catch (e) {
-      debugPrint('[AudioPlayer] Download failed: $e');
+      debugPrint('[AudioPlayer] Erro ao obter URL assinada: $e');
+      rethrow; // Re-throw para que o erro seja propagado e tratado acima
     }
   }
   
@@ -258,11 +210,6 @@ class AudioPlayerProvider extends ChangeNotifier {
       'apikey': SupabaseConfig.supabaseAnonKey,
       if (session != null) 'Authorization': 'Bearer ${session.accessToken}',
     };
-  }
-  
-  String _buildR2ProxyUrl(String filePath) {
-    if (filePath.startsWith('http')) return filePath;
-    return R2Config.buildFileUrl(filePath);
   }
   
   // ============ GETTERS ============
@@ -301,41 +248,22 @@ class AudioPlayerProvider extends ChangeNotifier {
     }
   }
   
-  /// Próxima faixa (circular)
   Future<void> seekToNext() async {
-    final current = _audioPlayer.currentIndex ?? 0;
-    final total = _currentVersions?.length ?? 0;
-    if (total == 0) return;
-    
-    final next = (current + 1) % total;
-    await _audioPlayer.seek(Duration.zero, index: next);
-    if (!_audioPlayer.playing) await play();
-    notifyListeners();
+    await _audioPlayer.seekToNext(); 
+    // JustAudio já lida com playlist, mas se quiser lógica circular manual:
+    // O setLoopMode(LoopMode.all) já deve cuidar do circular quando termina
+    // Mas seekToNext() pode travar no fim se não tiver habilitado
+    // Vamos manter o padrão da lib
   }
   
-  /// Faixa anterior (circular)
   Future<void> seekToPrevious() async {
-    final current = _audioPlayer.currentIndex ?? 0;
-    final total = _currentVersions?.length ?? 0;
-    if (total == 0) return;
-    
-    // Se passou mais de 3s, volta ao início
-    if (_audioPlayer.position.inSeconds > 3) {
-      await _audioPlayer.seek(Duration.zero);
-    } else {
-      final prev = current > 0 ? current - 1 : total - 1;
-      await _audioPlayer.seek(Duration.zero, index: prev);
-      if (!_audioPlayer.playing) await play();
-    }
-    notifyListeners();
+    await _audioPlayer.seekToPrevious();
   }
   
-  /// Pula para faixa específica
   Future<void> skipToTrack(int index) async {
     if (_currentVersions == null || index < 0 || index >= _currentVersions!.length) return;
     await _audioPlayer.seek(Duration.zero, index: index);
     await play();
-    notifyListeners();
   }
   
   Future<void> toggleShuffle() async {
@@ -358,130 +286,9 @@ class AudioPlayerProvider extends ChangeNotifier {
     return null;
   }
   
-  void clearCache() => _audioCache.clear();
-  
   @override
   void dispose() {
     _audioPlayer.dispose();
-    _audioCache.clear();
     super.dispose();
-  }
-}
-
-/// AudioSource de bytes em cache
-class _CachedAudioSource extends StreamAudioSource {
-  final Uint8List bytes;
-  final AudioVersion version;
-  
-  _CachedAudioSource({required this.bytes, required this.version})
-      : super(tag: MediaItem(id: version.id, title: version.name, artist: '[UNFINISHED]'));
-  
-  @override
-  Future<StreamAudioResponse> request([int? start, int? end]) async {
-    start ??= 0;
-    end ??= bytes.length;
-    
-    return StreamAudioResponse(
-      sourceLength: bytes.length,
-      contentLength: end - start,
-      offset: start,
-      stream: Stream.value(bytes.sublist(start, end)),
-      contentType: _contentType,
-    );
-  }
-  
-  String get _contentType {
-    switch ((version.format ?? 'wav').toLowerCase()) {
-      case 'mp3': return 'audio/mpeg';
-      case 'flac': return 'audio/flac';
-      case 'aiff': return 'audio/aiff';
-      case 'm4a': return 'audio/mp4';
-      default: return 'audio/wav';
-    }
-  }
-}
-
-/// AudioSource com lazy loading
-class _LazyAudioSource extends StreamAudioSource {
-  final AudioVersion version;
-  final String fileUrl;
-  final Map<String, String> headers;
-  final Map<String, Uint8List> cache;
-  final VoidCallback? onLoaded;
-  
-  Uint8List? _bytes;
-  bool _isLoading = false;
-  Completer<void>? _loadCompleter;
-  
-  _LazyAudioSource({
-    required this.version,
-    required this.fileUrl,
-    required this.headers,
-    required this.cache,
-    this.onLoaded,
-  }) : super(tag: MediaItem(id: version.id, title: version.name, artist: '[UNFINISHED]'));
-  
-  @override
-  Future<StreamAudioResponse> request([int? start, int? end]) async {
-    // Verificar cache
-    _bytes ??= cache[version.id];
-    
-    // Carregar se necessário
-    if (_bytes == null) {
-      if (!_isLoading) {
-        _isLoading = true;
-        _loadCompleter = Completer<void>();
-        
-        try {
-          debugPrint('[LazyAudio] Loading: ${version.name}');
-          final response = await http.get(Uri.parse(fileUrl), headers: headers);
-          
-          if (response.statusCode == 200) {
-            _bytes = response.bodyBytes;
-            cache[version.id] = _bytes!;
-            debugPrint('[LazyAudio] Loaded: ${version.name}');
-            onLoaded?.call();
-          } else {
-            throw Exception('HTTP ${response.statusCode}');
-          }
-        } catch (e) {
-          debugPrint('[LazyAudio] Error: $e');
-          _loadCompleter?.completeError(e);
-          rethrow;
-        } finally {
-          _isLoading = false;
-          if (!_loadCompleter!.isCompleted) {
-            _loadCompleter!.complete();
-          }
-        }
-      } else {
-        // Aguardar carregamento em andamento
-        await _loadCompleter?.future;
-        _bytes ??= cache[version.id];
-      }
-    }
-    
-    if (_bytes == null) throw Exception('Failed to load audio');
-    
-    start ??= 0;
-    end ??= _bytes!.length;
-    
-    return StreamAudioResponse(
-      sourceLength: _bytes!.length,
-      contentLength: end - start,
-      offset: start,
-      stream: Stream.value(_bytes!.sublist(start, end)),
-      contentType: _contentType,
-    );
-  }
-  
-  String get _contentType {
-    switch ((version.format ?? 'wav').toLowerCase()) {
-      case 'mp3': return 'audio/mpeg';
-      case 'flac': return 'audio/flac';
-      case 'aiff': return 'audio/aiff';
-      case 'm4a': return 'audio/mp4';
-      default: return 'audio/wav';
-    }
   }
 }
