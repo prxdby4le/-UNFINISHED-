@@ -82,9 +82,10 @@ lib/generated_plugin_registrant.dart
 !**/ios/**/default.pbxuser
 !**/ios/**/default.perspectivev3
 
-# Cache de áudio
+# Cache de áudio (diretórios de cache, não os arquivos fonte)
 **/audio_cache/
-**/cache/
+# Não ignorar lib/core/cache/ (contém código fonte)
+# **/cache/
 
 # Arquivos de ambiente
 .env
@@ -93,4 +94,5 @@ lib/generated_plugin_registrant.dart
 
 # Arquivos de configuração sensíveis
 lib/core/config/supabase_config.dart
-lib/core/config/r2_config.dart
+# r2_config.dart não contém informações sensíveis, apenas usa SupabaseConfig
+# lib/core/config/r2_config.dart
