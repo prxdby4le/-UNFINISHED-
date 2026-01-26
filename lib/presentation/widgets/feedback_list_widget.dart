@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/config/supabase_config.dart';
 import '../../data/repositories/feedback_repository.dart';
 import '../../data/models/feedback.dart' as models;
+import 'authenticated_image.dart';
 
 class FeedbackListWidget extends StatefulWidget {
   final String audioVersionId;
@@ -198,19 +199,54 @@ class _FeedbackItem extends StatelessWidget {
             // Header com autor e ações
             Row(
               children: [
-                // Avatar ou inicial
-                CircleAvatar(
-                  radius: 16,
-                  backgroundColor: Theme.of(context).primaryColor.withOpacity(0.3),
-                  child: Text(
-                    feedback.authorName?.substring(0, 1).toUpperCase() ?? '?',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
+                // Avatar com foto ou inicial
+                feedback.authorAvatarUrl != null
+                    ? ClipOval(
+                        child: SizedBox(
+                          width: 32,
+                          height: 32,
+                          child: AuthenticatedImage(
+                            imageUrl: feedback.authorAvatarUrl!,
+                            fit: BoxFit.cover,
+                            placeholder: CircleAvatar(
+                              radius: 16,
+                              backgroundColor: Theme.of(context).primaryColor.withOpacity(0.3),
+                              child: Text(
+                                feedback.authorName?.substring(0, 1).toUpperCase() ?? '?',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            errorWidget: CircleAvatar(
+                              radius: 16,
+                              backgroundColor: Theme.of(context).primaryColor.withOpacity(0.3),
+                              child: Text(
+                                feedback.authorName?.substring(0, 1).toUpperCase() ?? '?',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      )
+                    : CircleAvatar(
+                        radius: 16,
+                        backgroundColor: Theme.of(context).primaryColor.withOpacity(0.3),
+                        child: Text(
+                          feedback.authorName?.substring(0, 1).toUpperCase() ?? '?',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
                 const SizedBox(width: 12),
                 // Nome e data
                 Expanded(

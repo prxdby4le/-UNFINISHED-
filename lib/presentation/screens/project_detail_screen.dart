@@ -353,11 +353,15 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(12),
                     child: _coverImageUrl != null
-                        ? AuthenticatedImage(
-                            imageUrl: _coverImageUrl!,
-                            fit: BoxFit.cover,
-                            placeholder: _buildPlaceholderCover(),
-                            errorWidget: _buildPlaceholderCover(),
+                        ? SizedBox(
+                            width: 160,
+                            height: 160,
+                            child: AuthenticatedImage(
+                              imageUrl: _coverImageUrl!,
+                              fit: BoxFit.cover,
+                              placeholder: _buildPlaceholderCover(),
+                              errorWidget: _buildPlaceholderCover(),
+                            ),
                           )
                         : _buildPlaceholderCover(),
                   ),

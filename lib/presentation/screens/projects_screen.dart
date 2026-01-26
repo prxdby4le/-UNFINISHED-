@@ -10,6 +10,7 @@ import 'login_screen.dart';
 import 'project_detail_screen.dart';
 import 'create_project_screen.dart';
 import 'cache_settings_screen.dart';
+import 'profile_screen.dart';
 import '../widgets/common/error_widget.dart';
 import '../widgets/common/empty_state_widget.dart';
 import '../widgets/common/skeleton_loader.dart';
@@ -412,6 +413,20 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
               ),
             ),
             const SizedBox(height: 24),
+            ListTile(
+              leading: const Icon(Icons.person_outline, color: Colors.white70),
+              title: const Text('Perfil', style: TextStyle(color: Colors.white)),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const ProfileScreen(),
+                  ),
+                );
+              },
+            ),
             ListTile(
               leading: const Icon(Icons.storage_outlined, color: Colors.white70),
               title: const Text('Gerenciar Cache', style: TextStyle(color: Colors.white)),

@@ -12,7 +12,7 @@ import '../../data/repositories/image_repository.dart';
 import '../../core/utils/color_extractor.dart';
 import '../providers/audio_player_provider.dart';
 import '../widgets/authenticated_image.dart';
-import '../widgets/real_waveform_widget.dart';
+// Waveform removido temporariamente - usando apenas barra de progresso
 
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({super.key});
@@ -146,8 +146,8 @@ class _PlayerScreenState extends State<PlayerScreen>
                           _buildTrackInfo(currentVersion),
                           const SizedBox(height: 32),
                           
-                          // Waveform + Progress
-                          _buildWaveformSection(playerProvider),
+                          // Progress bar (waveform removido temporariamente)
+                          _buildProgressBar(playerProvider),
                           const SizedBox(height: 24),
                           
                           // Time labels
@@ -384,7 +384,7 @@ class _PlayerScreenState extends State<PlayerScreen>
     );
   }
 
-  Widget _buildWaveformSection(AudioPlayerProvider playerProvider) {
+  Widget _buildProgressBar(AudioPlayerProvider playerProvider) {
     return StreamBuilder<Duration>(
       stream: playerProvider.positionStream,
       builder: (context, posSnapshot) {
@@ -420,19 +420,24 @@ class _PlayerScreenState extends State<PlayerScreen>
                 playerProvider.seek(newPosition);
               },
               child: Container(
-                height: 64,
+                height: 4,
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.05),
-                  borderRadius: BorderRadius.circular(16),
+                  color: Colors.white.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(2),
                 ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: RealWaveformWidget(
-                    progress: progress.clamp(0.0, 1.0),
-                    accentColor: _accentColor,
-                    trackId: playerProvider.getCurrentVersion()?.id,
-                    audioUrl: playerProvider.getCurrentVersion()?.fileUrl,
-                  ),
+                child: Stack(
+                  children: [
+                    // Barra de progresso
+                    FractionallySizedBox(
+                      widthFactor: progress.clamp(0.0, 1.0),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: _accentColor,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             );
@@ -1138,8 +1143,10 @@ class _ActionButton extends StatelessWidget {
   }
 }
 
-// ==================== WAVEFORM PAINTER ====================
+// ==================== WAVEFORM PAINTER (REMOVIDO TEMPORARIAMENTE) ====================
+// Código comentado - waveform desabilitado temporariamente até encontrar melhor solução
 
+/*
 class _WaveformPainter extends CustomPainter {
   final double progress;
   final Color accentColor;
