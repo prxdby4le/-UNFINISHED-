@@ -130,6 +130,8 @@ class _AuthenticatedImageState extends State<AuthenticatedImage> {
     return Image.memory(
       _imageBytes!,
       fit: widget.fit,
+      width: null,
+      height: null,
     );
   }
 }

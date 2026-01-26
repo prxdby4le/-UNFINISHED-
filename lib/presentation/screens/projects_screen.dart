@@ -848,16 +848,20 @@ class _GlobalMiniPlayerState extends State<_GlobalMiniPlayer> {
         child: Row(
           children: [
             // Capa do projeto ou indicador de playing
-            ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: _coverImageUrl != null
-                  ? AuthenticatedImage(
-                      imageUrl: _coverImageUrl!,
-                      fit: BoxFit.cover,
-                      placeholder: _buildPlaceholder(),
-                      errorWidget: _buildPlaceholder(),
-                    )
-                  : _buildPlaceholder(),
+            SizedBox(
+              width: 40,
+              height: 40,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: _coverImageUrl != null
+                    ? AuthenticatedImage(
+                        imageUrl: _coverImageUrl!,
+                        fit: BoxFit.cover,
+                        placeholder: _buildPlaceholder(),
+                        errorWidget: _buildPlaceholder(),
+                      )
+                    : _buildPlaceholder(),
+              ),
             ),
             const SizedBox(width: 12),
             
