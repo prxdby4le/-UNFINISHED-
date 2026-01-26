@@ -1,5 +1,4 @@
 // lib/presentation/screens/player_screen.dart
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
@@ -397,48 +396,30 @@ class _PlayerScreenState extends State<PlayerScreen>
                 ? position.inMilliseconds / duration.inMilliseconds
                 : 0.0;
 
-            return GestureDetector(
-              onHorizontalDragUpdate: (details) {
-                final box = context.findRenderObject() as RenderBox;
-                final width = box.size.width;
-                final dx = details.localPosition.dx.clamp(0.0, width);
-                final newProgress = dx / width;
-                final newPosition = Duration(
-                  milliseconds: (duration.inMilliseconds * newProgress).round(),
-                );
-                playerProvider.seek(newPosition);
-              },
-              onTapDown: (details) {
-                HapticFeedback.lightImpact();
-                final box = context.findRenderObject() as RenderBox;
-                final width = box.size.width;
-                final dx = details.localPosition.dx.clamp(0.0, width);
-                final newProgress = dx / width;
-                final newPosition = Duration(
-                  milliseconds: (duration.inMilliseconds * newProgress).round(),
-                );
-                playerProvider.seek(newPosition);
-              },
-              child: Container(
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-                child: Stack(
-                  children: [
-                    // Barra de progresso
-                    FractionallySizedBox(
-                      widthFactor: progress.clamp(0.0, 1.0),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: _accentColor,
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+            return SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                trackHeight: 4,
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+                overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+                activeTrackColor: _accentColor,
+                inactiveTrackColor: Colors.white.withOpacity(0.1),
+                thumbColor: Colors.white,
+                overlayColor: _accentColor.withOpacity(0.2),
+              ),
+              child: Slider(
+                value: progress.clamp(0.0, 1.0),
+                onChanged: (value) {
+                  final newPosition = Duration(
+                    milliseconds: (duration.inMilliseconds * value).round(),
+                  );
+                  playerProvider.seek(newPosition);
+                },
+                onChangeStart: (_) {
+                  HapticFeedback.lightImpact();
+                },
+                onChangeEnd: (_) {
+                  HapticFeedback.lightImpact();
+                },
               ),
             );
           },
@@ -1184,7 +1165,7 @@ class _WaveformPainter extends CustomPainter {
         // Main section (drops, chorus)
         value = 0.5 + random.next() * 0.5;
         // Beats periódicos
-        if (i % 4 == 0) value = math.min(1.0, value + 0.1);
+        if (i % 4 == 0) value = (value + 0.1).clamp(0.0, 1.0)
       } else if (pos < 0.8) {
         // Bridge
         value = 0.4 + random.next() * 0.35;
@@ -1287,14 +1268,4 @@ class _WaveformPainter extends CustomPainter {
   bool shouldRepaint(covariant _WaveformPainter old) {
     return progress != old.progress || trackId != old.trackId;
   }
-}
-
-class _SeededRandom {
-  int _seed;
-  _SeededRandom(this._seed);
-  
-  double next() {
-    _seed = (_seed * 1103515245 + 12345) & 0x7fffffff;
-    return _seed / 0x7fffffff;
-  }
-}
+}*/

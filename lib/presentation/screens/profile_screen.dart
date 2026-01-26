@@ -1,11 +1,10 @@
 // lib/presentation/screens/profile_screen.dart
-import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+// kIsWeb não usado mais - sempre usando bytes
 import '../../data/repositories/image_repository.dart';
 import '../providers/auth_provider.dart';
 import '../widgets/authenticated_image.dart';
@@ -53,7 +52,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.image,
-        withData: kIsWeb,
+        withData: true, // Sempre usar bytes para compatibilidade web
       );
 
       if (result != null && result.files.isNotEmpty) {
@@ -62,14 +61,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
         Uint8List imageBytes;
         String fileName;
 
-        if (kIsWeb) {
+        // Usar bytes se disponível (sempre disponível com withData: true)
+        if (result.files.single.bytes != null) {
           imageBytes = result.files.single.bytes!;
           fileName = result.files.single.name;
         } else {
-          final file = result.files.single.path!;
-          final fileData = await File(file).readAsBytes();
-          imageBytes = fileData;
-          fileName = result.files.single.name;
+          throw Exception('Não foi possível ler os dados da imagem');
         }
 
         // Upload da imagem
@@ -204,11 +201,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               ),
                             )
                           : _selectedImageUrl != null
-                              ? AuthenticatedImage(
-                                  imageUrl: _selectedImageUrl!,
-                                  fit: BoxFit.cover,
-                                  placeholder: _buildPlaceholderAvatar(),
-                                  errorWidget: _buildPlaceholderAvatar(),
+                              ? SizedBox(
+                                  width: 120,
+                                  height: 120,
+                                  child: AuthenticatedImage(
+                                    imageUrl: _selectedImageUrl!,
+                                    fit: BoxFit.cover,
+                                    placeholder: _buildPlaceholderAvatar(),
+                                    errorWidget: _buildPlaceholderAvatar(),
+                                  ),
                                 )
                               : _buildPlaceholderAvatar(),
                     ),

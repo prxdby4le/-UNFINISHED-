@@ -1,7 +1,6 @@
 // lib/core/utils/waveform_generator.dart
-import 'dart:typed_data';
+// Temporariamente desabilitado - waveform removido do player
 import 'package:flutter/foundation.dart';
-import 'package:just_audio/just_audio.dart';
 import 'package:http/http.dart' as http;
 import '../../core/config/r2_config.dart';
 

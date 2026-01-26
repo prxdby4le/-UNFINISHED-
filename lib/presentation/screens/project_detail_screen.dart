@@ -20,11 +20,16 @@ import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:http/http.dart' as http;
+import 'package:archive/archive.dart';
+import '../../core/config/r2_config.dart';
+import 'dart:html' as html show Blob, Url, AnchorElement;
 import '../widgets/edit_version_modal.dart';
 import '../widgets/edit_project_modal.dart';
 import '../widgets/authenticated_image.dart';
 import '../../data/repositories/image_repository.dart';
 import '../../core/utils/color_extractor.dart';
+import '../../core/utils/responsive.dart';
 import 'upload_audio_screen.dart';
 import 'player_screen.dart';
 
@@ -46,6 +51,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
   bool _isTogglingLibrary = false;
   final _libraryRepo = LibraryRepository();
   final _imageRepo = ImageRepository();
+  final _audioRepo = AudioRepository();
   
   // Cor dinâmica baseada na capa
   Color _dominantColor = const Color(0xFF1E88E5);
@@ -221,36 +227,8 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
           // Background gradient baseado na cor dominante
           _buildDynamicBackground(),
           
-          // Conteúdo principal
-          RefreshIndicator(
-            onRefresh: _loadData,
-            color: _dominantColor,
-            backgroundColor: const Color(0xFF1A1A1F),
-            child: CustomScrollView(
-              physics: const AlwaysScrollableScrollPhysics(
-                parent: BouncingScrollPhysics(),
-              ),
-              slivers: [
-                // App Bar com gradiente
-                _buildSliverAppBar(),
-                
-                // Conteúdo
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const SizedBox(height: 24),
-                        _buildTracksList(),
-                        const SizedBox(height: 120), // Espaço para mini-player
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
+          // Conteúdo principal com suporte a drag and drop de arquivos (desktop)
+          _buildContentWithDragDrop(),
           
           // Mini-player fixo na parte inferior
           _buildMiniPlayer(),
@@ -279,6 +257,38 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
           ),
         );
       },
+    );
+  }
+
+  Widget _buildContentWithDragDrop() {
+    return RefreshIndicator(
+      onRefresh: _loadData,
+      color: _dominantColor,
+      backgroundColor: const Color(0xFF1A1A1F),
+      child: CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(
+          parent: BouncingScrollPhysics(),
+        ),
+        slivers: [
+          // App Bar com gradiente
+          _buildSliverAppBar(),
+          
+          // Conteúdo
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 24),
+                  _buildTracksList(),
+                  const SizedBox(height: 120), // Espaço para mini-player
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -435,13 +445,13 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
               ),
               const SizedBox(width: 12),
               
-              // Download
+              // Download (todas as faixas)
               _ActionIcon(
                 icon: Icons.download_outlined,
                 color: _dominantColor,
                 onPressed: () {
                   if (_versions.isNotEmpty) {
-                    _downloadVersion(_versions[0]);
+                    _downloadAllVersions();
                   }
                 },
               ),
@@ -515,39 +525,47 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
         ),
         const SizedBox(height: 16),
         
-        // Botão de adicionar faixa (sempre visível)
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: OutlinedButton.icon(
-            onPressed: () => _navigateToUpload(),
-            icon: const Icon(Icons.add, size: 18),
-            label: const Text('Adicionar faixa'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: _dominantColor,
-              side: BorderSide(color: _dominantColor.withOpacity(0.5)),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+        // Botão de adicionar faixa (apenas no mobile)
+        if (!Responsive.isDesktop(context))
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: OutlinedButton.icon(
+              onPressed: () => _navigateToUpload(),
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Adicionar faixa'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _dominantColor,
+                side: BorderSide(color: _dominantColor.withOpacity(0.5)),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
             ),
           ),
-        ),
-        const SizedBox(height: 16),
+        if (!Responsive.isDesktop(context)) const SizedBox(height: 16),
         
-        // Lista de tracks
-        ListView.builder(
+        // Lista de tracks (reordenável)
+        ReorderableListView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           itemCount: _versions.length,
+          onReorder: _handleReorder,
+          buildDefaultDragHandles: false, // Desabilitar handle padrão (que aparece à direita)
           itemBuilder: (context, index) {
             final version = _versions[index];
-            return _TrackTile(
-              index: index + 1,
-              version: version,
-              accentColor: _dominantColor,
-              onTap: () => _playTrack(version, index),
-              onMore: () => _showTrackOptions(version),
-              onComments: () => _showFeedbackModal(context, version),
+            return ReorderableDragStartListener(
+              key: ValueKey(version.id),
+              index: index,
+              child: _TrackTile(
+                key: ValueKey('${version.id}_tile'),
+                index: index + 1,
+                version: version,
+                accentColor: _dominantColor,
+                onTap: () => _playTrack(version, index),
+                onMore: () => _showTrackOptions(version),
+                onComments: () => _showFeedbackModal(context, version),
+              ),
             );
           },
         ),
@@ -741,6 +759,51 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
     }
   }
 
+  Future<void> _handleReorder(int oldIndex, int newIndex) async {
+    if (oldIndex < newIndex) {
+      newIndex -= 1;
+    }
+    
+    setState(() {
+      final item = _versions.removeAt(oldIndex);
+      _versions.insert(newIndex, item);
+    });
+
+    try {
+      // Atualizar ordem no banco
+      final versionIds = _versions.map((v) => v.id).toList();
+      await _audioRepo.reorderVersions(widget.projectId, versionIds);
+      
+      // Recarregar player se estiver tocando este projeto
+      final playerProvider = context.read<AudioPlayerProvider>();
+      if (playerProvider.currentProjectId == widget.projectId) {
+        await playerProvider.loadProjectVersions(projectId: widget.projectId);
+      }
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Ordem das faixas atualizada'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Erro ao reordenar: $e');
+      // Reverter mudança em caso de erro
+      _loadData();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao atualizar ordem: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   void _showMoreOptions() {
     // Redirecionar para o novo método de opções do projeto
     _showProjectOptions();
@@ -753,97 +816,99 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const SizedBox(height: 12),
-          Container(
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(2),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 12),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(2),
+              ),
             ),
-          ),
-          const SizedBox(height: 20),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Row(
-              children: [
-                Container(
-                  width: 50,
-                  height: 50,
-                  decoration: BoxDecoration(
-                    color: _dominantColor.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(8),
+            const SizedBox(height: 20),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Row(
+                children: [
+                  Container(
+                    width: 50,
+                    height: 50,
+                    decoration: BoxDecoration(
+                      color: _dominantColor.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(Icons.music_note, color: _dominantColor),
                   ),
-                  child: Icon(Icons.music_note, color: _dominantColor),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        version.name,
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      Text(
-                        '${version.format?.toUpperCase() ?? 'WAV'} · ${version.formattedFileSize}',
-                        style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 12),
-                      ),
-                    ],
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          version.name,
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        Text(
+                          '${version.format?.toUpperCase() ?? 'WAV'} · ${version.formattedFileSize}${version.durationSeconds != null ? ' · ${version.formattedDuration}' : ''}',
+                          style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 12),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          const SizedBox(height: 20),
-          ListTile(
-            leading: Icon(Icons.play_arrow, color: _dominantColor),
-            title: const Text('Reproduzir', style: TextStyle(color: Colors.white)),
-            onTap: () {
-              Navigator.pop(context);
-              final index = _versions.indexOf(version);
-              _playTrack(version, index);
-            },
-          ),
-          ListTile(
-            leading: Icon(Icons.comment_outlined, color: _dominantColor),
-            title: const Text('Comentários', style: TextStyle(color: Colors.white)),
-            onTap: () {
-              Navigator.pop(context);
-              _showFeedbackModal(context, version);
-            },
-          ),
-          ListTile(
-            leading: Icon(Icons.edit_outlined, color: _dominantColor),
-            title: const Text('Editar', style: TextStyle(color: Colors.white)),
-            onTap: () {
-              Navigator.pop(context);
-              _editVersion(version);
-            },
-          ),
-          ListTile(
-            leading: Icon(Icons.download_outlined, color: _dominantColor),
-            title: const Text('Baixar', style: TextStyle(color: Colors.white)),
-            onTap: () {
-              Navigator.pop(context);
-              _downloadVersion(version);
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.delete_outline, color: Colors.redAccent),
-            title: const Text('Excluir', style: TextStyle(color: Colors.redAccent)),
-            onTap: () {
-              Navigator.pop(context);
-              _deleteVersion(version);
-            },
-          ),
-          const SizedBox(height: 20),
-        ],
+            const SizedBox(height: 20),
+            ListTile(
+              leading: Icon(Icons.play_arrow, color: _dominantColor),
+              title: const Text('Reproduzir', style: TextStyle(color: Colors.white)),
+              onTap: () {
+                Navigator.pop(context);
+                final index = _versions.indexOf(version);
+                _playTrack(version, index);
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.comment_outlined, color: _dominantColor),
+              title: const Text('Comentários', style: TextStyle(color: Colors.white)),
+              onTap: () {
+                Navigator.pop(context);
+                _showFeedbackModal(context, version);
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.edit_outlined, color: _dominantColor),
+              title: const Text('Editar', style: TextStyle(color: Colors.white)),
+              onTap: () {
+                Navigator.pop(context);
+                _editVersion(version);
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.download_outlined, color: _dominantColor),
+              title: const Text('Baixar', style: TextStyle(color: Colors.white)),
+              onTap: () {
+                Navigator.pop(context);
+                _downloadVersion(version);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Colors.redAccent),
+              title: const Text('Excluir', style: TextStyle(color: Colors.redAccent)),
+              onTap: () {
+                Navigator.pop(context);
+                _deleteVersion(version);
+              },
+            ),
+            SizedBox(height: MediaQuery.of(context).padding.bottom + 20),
+          ],
+        ),
       ),
     );
   }
@@ -922,54 +987,56 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const SizedBox(height: 12),
-          Container(
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          const SizedBox(height: 20),
-          if (_project != null) ...[
-            ListTile(
-              leading: Icon(Icons.edit_outlined, color: _dominantColor),
-              title: const Text('Editar Projeto', style: TextStyle(color: Colors.white)),
-              onTap: () {
-                Navigator.pop(context);
-                _editProject();
-              },
-            ),
-            ListTile(
-              leading: Icon(Icons.image_outlined, color: _dominantColor),
-              title: const Text('Mudar Capa', style: TextStyle(color: Colors.white)),
-              onTap: () {
-                Navigator.pop(context);
-                _changeCover();
-              },
-            ),
-            ListTile(
-              leading: Icon(
-                _project!.isArchived ? Icons.unarchive_outlined : Icons.archive_outlined,
-                color: _dominantColor,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 12),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(2),
               ),
-              title: Text(
-                _project!.isArchived ? 'Desarquivar' : 'Arquivar',
-                style: const TextStyle(color: Colors.white),
-              ),
-              onTap: () {
-                Navigator.pop(context);
-                _toggleArchive();
-              },
             ),
-            const Divider(color: Color(0xFF2A2A2F)),
+            const SizedBox(height: 20),
+            if (_project != null) ...[
+              ListTile(
+                leading: Icon(Icons.edit_outlined, color: _dominantColor),
+                title: const Text('Editar Projeto', style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _editProject();
+                },
+              ),
+              ListTile(
+                leading: Icon(Icons.image_outlined, color: _dominantColor),
+                title: const Text('Mudar Capa', style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _changeCover();
+                },
+              ),
+              ListTile(
+                leading: Icon(
+                  _project!.isArchived ? Icons.unarchive_outlined : Icons.archive_outlined,
+                  color: _dominantColor,
+                ),
+                title: Text(
+                  _project!.isArchived ? 'Desarquivar' : 'Arquivar',
+                  style: const TextStyle(color: Colors.white),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  _toggleArchive();
+                },
+              ),
+              const Divider(color: Color(0xFF2A2A2F)),
+            ],
+            SizedBox(height: MediaQuery.of(context).padding.bottom + 20),
           ],
-          const SizedBox(height: 20),
-        ],
+        ),
       ),
     );
   }
@@ -1114,31 +1181,191 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
 
   Future<void> _downloadVersion(AudioVersion version) async {
     try {
-      // Obter URL assinada
-      final repository = AudioRepository();
-      final signedUrl = await repository.getSignedUrl(version.fileUrl);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Baixando ${version.name}...'),
+            backgroundColor: _dominantColor,
+            duration: const Duration(seconds: 1),
+          ),
+        );
+      }
+
+      // Usar proxy R2 em vez de URL assinada direta (evita CORS)
+      final proxyUrl = R2Config.buildFileUrl(version.fileUrl);
       
-      // Abrir URL no navegador para download
-      final uri = Uri.parse(signedUrl);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-        
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Download iniciado: ${version.name}'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
+      // Obter extensão do arquivo para o nome do download
+      final fileExtension = version.fileUrl.split('.').last;
+      final fileName = '${version.name}.$fileExtension';
+      
+      // Baixar arquivo diretamente via proxy
+      if (kIsWeb) {
+        // No web, usar download direto via AnchorElement
+        await _downloadFileWeb(proxyUrl, fileName);
       } else {
-        throw Exception('Não foi possível abrir a URL de download');
+        // Em mobile/desktop, usar url_launcher com proxy
+        final uri = Uri.parse(proxyUrl);
+        if (await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        } else {
+          throw Exception('Não foi possível abrir a URL de download');
+        }
+      }
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Download concluído: ${version.name}'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 2),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Erro ao baixar: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _downloadFileWeb(String url, String fileName) async {
+    try {
+      // Obter headers de autenticação
+      final headers = R2Config.getAuthHeaders();
+      
+      // Fazer requisição HTTP para obter os bytes
+      final response = await http.get(Uri.parse(url), headers: headers);
+      
+      if (response.statusCode != 200) {
+        throw Exception('Erro ao baixar arquivo: ${response.statusCode}');
+      }
+
+      // No web, usar dart:html para download direto
+      if (kIsWeb) {
+        final blob = html.Blob([response.bodyBytes]);
+        final objectUrl = html.Url.createObjectUrlFromBlob(blob);
+        final anchor = html.AnchorElement(href: objectUrl)
+          ..setAttribute('download', fileName);
+        anchor.click();
+        html.Url.revokeObjectUrl(objectUrl);
+      }
+    } catch (e) {
+      debugPrint('Erro ao baixar arquivo: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> _downloadAllVersions() async {
+    if (_versions.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Nenhuma faixa para baixar'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Preparando download de ${_versions.length} faixa(s)...'),
+            backgroundColor: _dominantColor,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+
+      final headers = R2Config.getAuthHeaders();
+      final archive = Archive();
+      
+      int successCount = 0;
+      int failCount = 0;
+
+      // Baixar todas as faixas e adicionar ao ZIP
+      for (var version in _versions) {
+        try {
+          // Usar proxy R2 em vez de URL assinada direta (evita CORS)
+          final proxyUrl = R2Config.buildFileUrl(version.fileUrl);
+          
+          // Fazer requisição HTTP para obter os bytes via proxy
+          final response = await http.get(Uri.parse(proxyUrl), headers: headers);
+          
+          if (response.statusCode == 200) {
+            // Obter extensão do arquivo
+            final fileExtension = version.fileUrl.split('.').last;
+            final fileName = '${version.name}.$fileExtension';
+            
+            // Adicionar ao ZIP
+            final archiveFile = ArchiveFile(fileName, response.bodyBytes.length, response.bodyBytes);
+            archive.addFile(archiveFile);
+            successCount++;
+          } else {
+            failCount++;
+            debugPrint('Erro ao baixar ${version.name}: Status ${response.statusCode}');
+          }
+        } catch (e) {
+          debugPrint('Erro ao baixar ${version.name}: $e');
+          failCount++;
+        }
+      }
+
+      if (successCount == 0) {
+        throw Exception('Nenhuma faixa foi baixada com sucesso');
+      }
+
+      // Criar ZIP
+      final zipEncoder = ZipEncoder();
+      final zipBytes = zipEncoder.encode(archive);
+      
+      if (zipBytes == null) {
+        throw Exception('Erro ao criar arquivo ZIP');
+      }
+
+      // Fazer download do ZIP
+      final projectName = _project?.name ?? 'projeto';
+      final zipFileName = '$projectName.zip';
+      
+      if (kIsWeb) {
+        // No web, usar dart:html para download direto
+        final blob = html.Blob([zipBytes]);
+        final objectUrl = html.Url.createObjectUrlFromBlob(blob);
+        final anchor = html.AnchorElement(href: objectUrl)
+          ..setAttribute('download', zipFileName);
+        anchor.click();
+        html.Url.revokeObjectUrl(objectUrl);
+      } else {
+        // Em mobile/desktop, salvar arquivo
+        // TODO: Implementar salvamento de arquivo em mobile/desktop
+        throw Exception('Download de ZIP ainda não implementado para mobile/desktop');
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              failCount > 0
+                  ? 'ZIP criado com $successCount faixa(s). $failCount falhou(ram).'
+                  : 'ZIP criado com sucesso! ($successCount faixa(s))',
+            ),
+            backgroundColor: failCount > 0 ? Colors.orange : Colors.green,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao criar ZIP: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -1315,6 +1542,7 @@ class _TrackTile extends StatefulWidget {
   final VoidCallback onComments;
 
   const _TrackTile({
+    super.key,
     required this.index,
     required this.version,
     required this.accentColor,
@@ -1369,7 +1597,60 @@ class _TrackTileState extends State<_TrackTile> {
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
           child: Row(
+            mainAxisSize: MainAxisSize.max,
             children: [
+              // LADO ESQUERDO: Handle de arrastar (ícone visual)
+              Icon(
+                Icons.drag_handle,
+                color: Colors.white.withOpacity(0.3),
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              
+              // Botão de comentários
+              GestureDetector(
+                onTap: widget.onComments,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: widget.accentColor.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.comment_outlined,
+                        size: 14,
+                        color: widget.accentColor,
+                      ),
+                      if (!_isLoadingCount && _commentCount > 0) ...[
+                        const SizedBox(width: 4),
+                        Text(
+                          '$_commentCount',
+                          style: TextStyle(
+                            color: widget.accentColor,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ] else if (_isLoadingCount) ...[
+                        const SizedBox(width: 4),
+                        SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(widget.accentColor),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              
               // Número ou animação
               SizedBox(
                 width: 32,
@@ -1387,7 +1668,7 @@ class _TrackTileState extends State<_TrackTile> {
               ),
               const SizedBox(width: 12),
               
-              // Info da track
+              // Info da track (ocupa o espaço do meio)
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1430,71 +1711,40 @@ class _TrackTileState extends State<_TrackTile> {
                             fontSize: 11,
                           ),
                         ),
+                        if (widget.version.durationSeconds != null) ...[
+                          Text(
+                            ' · ${widget.version.formattedDuration}',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.4),
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ],
                 ),
               ),
               
-              // Botão de comentários (se houver)
-              if (_commentCount > 0 || _isLoadingCount) ...[
-                GestureDetector(
-                  onTap: widget.onComments,
+              const SizedBox(width: 12),
+              
+              // LADO DIREITO: Menu de opções (3 pontinhos)
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: widget.onMore,
+                  borderRadius: BorderRadius.circular(20),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: widget.accentColor.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.comment_outlined,
-                          size: 14,
-                          color: widget.accentColor,
-                        ),
-                        const SizedBox(width: 4),
-                        _isLoadingCount
-                            ? SizedBox(
-                                width: 12,
-                                height: 12,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation<Color>(widget.accentColor),
-                                ),
-                              )
-                            : Text(
-                                '$_commentCount',
-                                style: TextStyle(
-                                  color: widget.accentColor,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                      ],
+                    width: 32,
+                    height: 32,
+                    alignment: Alignment.center,
+                    child: Icon(
+                      Icons.more_vert,
+                      color: Colors.white.withOpacity(0.7),
+                      size: 20,
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
-              ],
-              
-              // Duração
-              Text(
-                widget.version.formattedDuration,
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.5),
-                  fontSize: 13,
-                ),
-              ),
-              const SizedBox(width: 8),
-              
-              // Menu
-              IconButton(
-                icon: Icon(Icons.more_horiz, color: Colors.white.withOpacity(0.5), size: 20),
-                onPressed: widget.onMore,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               ),
             ],
           ),

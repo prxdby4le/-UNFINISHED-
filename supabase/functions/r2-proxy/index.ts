@@ -214,17 +214,21 @@ serve(async (req) => {
     // Processar requisição baseada no método
     if (method === 'GET') {
       try {
-        // Verificar se é uma imagem (serve diretamente para evitar CORS)
-        // Verificar extensão ou se está no diretório covers
+        // Verificar se é uma imagem ou áudio (serve diretamente para evitar CORS)
+        // Verificar extensão ou se está no diretório covers/avatars
         const hasImageExtension = /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(key)
+        const hasAudioExtension = /\.(mp3|wav|flac|aiff|m4a|aac|ogg)$/i.test(key)
         const isInCoversFolder = /^covers\//i.test(key) || /\/covers\//i.test(key)
-        const isImage = hasImageExtension || isInCoversFolder
+        const isInAvatarsFolder = /^avatars\//i.test(key) || /\/avatars\//i.test(key)
+        const isInProjectsFolder = /^projects\//i.test(key) || /\/projects\//i.test(key)
+        const isImage = hasImageExtension || isInCoversFolder || isInAvatarsFolder
+        const isAudio = hasAudioExtension || isInProjectsFolder
         
-        console.log('[R2-Proxy] Key:', key, 'hasExtension:', hasImageExtension, 'inCovers:', isInCoversFolder, 'isImage:', isImage)
+        console.log('[R2-Proxy] Key:', key, 'hasImageExtension:', hasImageExtension, 'hasAudioExtension:', hasAudioExtension, 'isImage:', isImage, 'isAudio:', isAudio)
         
-        if (isImage) {
-          // Para imagens, servir diretamente através do proxy (evita CORS)
-          console.log('[R2-Proxy] Serving image directly:', key)
+        if (isImage || isAudio) {
+          // Para imagens e áudio, servir diretamente através do proxy (evita CORS)
+          console.log('[R2-Proxy] Serving file directly:', key, 'type:', isImage ? 'image' : 'audio')
           
           try {
             const { GetObjectCommand } = await import("https://esm.sh/@aws-sdk/client-s3@3.490.0")
@@ -283,39 +287,49 @@ serve(async (req) => {
               }
             } catch (bodyError) {
               console.error('[R2-Proxy] Error reading body:', bodyError)
-              throw new Error(`Failed to read image body: ${bodyError instanceof Error ? bodyError.message : String(bodyError)}`)
+              throw new Error(`Failed to read file body: ${bodyError instanceof Error ? bodyError.message : String(bodyError)}`)
             }
             
             // Determinar content type baseado na extensão ou no ContentType do response
-            let contentType = response.ContentType || 'image/jpeg'
+            let contentType = response.ContentType
             if (!contentType || contentType === 'application/octet-stream') {
               // Fallback para extensão
-              if (key.endsWith('.png')) contentType = 'image/png'
-              else if (key.endsWith('.gif')) contentType = 'image/gif'
-              else if (key.endsWith('.webp')) contentType = 'image/webp'
-              else if (key.endsWith('.svg')) contentType = 'image/svg+xml'
-              else if (key.endsWith('.jpg') || key.endsWith('.jpeg')) contentType = 'image/jpeg'
+              const lowerKey = key.toLowerCase()
+              if (lowerKey.endsWith('.png')) contentType = 'image/png'
+              else if (lowerKey.endsWith('.gif')) contentType = 'image/gif'
+              else if (lowerKey.endsWith('.webp')) contentType = 'image/webp'
+              else if (lowerKey.endsWith('.svg')) contentType = 'image/svg+xml'
+              else if (lowerKey.endsWith('.jpg') || lowerKey.endsWith('.jpeg')) contentType = 'image/jpeg'
+              else if (lowerKey.endsWith('.mp3')) contentType = 'audio/mpeg'
+              else if (lowerKey.endsWith('.wav')) contentType = 'audio/wav'
+              else if (lowerKey.endsWith('.flac')) contentType = 'audio/flac'
+              else if (lowerKey.endsWith('.aiff')) contentType = 'audio/aiff'
+              else if (lowerKey.endsWith('.m4a')) contentType = 'audio/mp4'
+              else if (lowerKey.endsWith('.aac')) contentType = 'audio/aac'
+              else if (lowerKey.endsWith('.ogg')) contentType = 'audio/ogg'
+              else contentType = isImage ? 'image/jpeg' : 'audio/mpeg'
             }
             
-            console.log('[R2-Proxy] Image served successfully, size:', result.length, 'bytes, type:', contentType)
+            console.log('[R2-Proxy] File served successfully, size:', result.length, 'bytes, type:', contentType)
             
-            // Retornar resposta com CORS e o body da imagem
+            // Retornar resposta com CORS e o body do arquivo
             return new Response(result, {
               status: 200,
               headers: {
                 ...getCorsHeaders(origin),
                 'Content-Type': contentType,
                 'Cache-Control': 'public, max-age=3600',
+                'Content-Disposition': `attachment; filename="${key.split('/').pop()}"`,
               }
             })
-          } catch (imageError) {
-            console.error('[R2-Proxy] Error serving image:', imageError)
-            // Se falhar ao servir imagem, retornar erro com CORS
+          } catch (fileError) {
+            console.error('[R2-Proxy] Error serving file:', fileError)
+            // Se falhar ao servir arquivo, retornar erro com CORS
             return corsResponse(
               JSON.stringify({ 
-                error: 'Failed to serve image',
+                error: 'Failed to serve file',
                 key: key,
-                details: imageError instanceof Error ? imageError.message : String(imageError)
+                details: fileError instanceof Error ? fileError.message : String(fileError)
               }),
               500,
               'application/json',

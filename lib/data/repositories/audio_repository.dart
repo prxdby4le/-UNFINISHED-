@@ -169,6 +169,36 @@ class AudioRepository {
     return AudioVersion.fromJson(response);
   }
 
+  /// Reordena as versões de um projeto
+  /// Atualiza o created_at para refletir a nova ordem
+  Future<void> reorderVersions(String projectId, List<String> versionIdsInOrder) async {
+    try {
+      // Buscar todas as versões do projeto
+      final allVersions = await getVersionsByProject(projectId);
+      
+      // Criar um mapa de ID para versão
+      final versionMap = {for (var v in allVersions) v.id: v};
+      
+      // Atualizar created_at de cada versão baseado na nova ordem
+      // Usar timestamps incrementais para manter a ordem
+      final baseTime = DateTime.now().subtract(Duration(days: versionIdsInOrder.length));
+      
+      for (int i = 0; i < versionIdsInOrder.length; i++) {
+        final versionId = versionIdsInOrder[i];
+        if (versionMap.containsKey(versionId)) {
+          final newCreatedAt = baseTime.add(Duration(seconds: i));
+          await _supabase
+              .from('audio_versions')
+              .update({'created_at': newCreatedAt.toIso8601String()})
+              .eq('id', versionId);
+        }
+      }
+    } catch (e) {
+      print('Erro ao reordenar versões: $e');
+      rethrow;
+    }
+  }
+
   /// Deleta uma versão de áudio
   Future<void> deleteVersion(String id) async {
     // TODO: Deletar arquivo do R2 também

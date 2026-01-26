@@ -60,10 +60,20 @@ class _AuthenticatedImageState extends State<AuthenticatedImage> {
       );
 
       if (response.statusCode == 200) {
-        // Verificar se a resposta é JSON (erro - Edge Function retornou URL assinada)
+        // Verificar se a resposta é realmente uma imagem
         final contentType = response.headers['content-type'] ?? '';
-        final bodyString = String.fromCharCodes(response.bodyBytes.take(100));
+        final bodyString = String.fromCharCodes(response.bodyBytes.take(200));
         
+        // Detectar HTML (DOCTYPE, <html, etc)
+        if (bodyString.trim().startsWith('<!') || 
+            bodyString.contains('DOCTYPE') || 
+            bodyString.contains('<html') ||
+            bodyString.contains('<HTML')) {
+          debugPrint('[AuthenticatedImage] Edge Function retornou HTML em vez de imagem');
+          throw Exception('Edge Function retornou HTML em vez de imagem');
+        }
+        
+        // Verificar se é JSON
         if (contentType.contains('application/json') || bodyString.trim().startsWith('{')) {
           // A Edge Function retornou JSON em vez da imagem
           // Tentar extrair a URL e fazer nova requisição
@@ -76,6 +86,13 @@ class _AuthenticatedImageState extends State<AuthenticatedImage> {
               // Fazer nova requisição para a URL assinada
               final signedResponse = await http.get(Uri.parse(signedUrl));
               if (signedResponse.statusCode == 200) {
+                // Verificar se a resposta assinada também não é HTML
+                final signedBodyString = String.fromCharCodes(signedResponse.bodyBytes.take(200));
+                if (signedBodyString.trim().startsWith('<!') || 
+                    signedBodyString.contains('DOCTYPE')) {
+                  throw Exception('URL assinada retornou HTML');
+                }
+                
                 if (mounted) {
                   setState(() {
                     _imageBytes = signedResponse.bodyBytes;
@@ -91,7 +108,15 @@ class _AuthenticatedImageState extends State<AuthenticatedImage> {
           throw Exception('Edge Function retornou JSON em vez de imagem');
         }
         
-        // É uma imagem válida
+        // Verificar se o Content-Type indica imagem
+        if (!contentType.startsWith('image/') && 
+            !contentType.isEmpty && 
+            !contentType.contains('octet-stream')) {
+          debugPrint('[AuthenticatedImage] Content-Type inesperado: $contentType');
+          // Mesmo assim, tentar usar os bytes (pode ser uma imagem sem Content-Type correto)
+        }
+        
+        // É uma imagem válida (ou pelo menos não é HTML/JSON)
         if (mounted) {
           setState(() {
             _imageBytes = response.bodyBytes;
