@@ -9,6 +9,14 @@ import '../providers/audio_player_provider.dart';
 import 'login_screen.dart';
 import 'project_detail_screen.dart';
 import 'create_project_screen.dart';
+import 'cache_settings_screen.dart';
+import '../widgets/common/error_widget.dart';
+import '../widgets/common/empty_state_widget.dart';
+import '../widgets/common/skeleton_loader.dart';
+import '../widgets/authenticated_image.dart';
+import '../../data/repositories/image_repository.dart';
+import '../../data/repositories/project_repository.dart';
+import '../../core/utils/color_extractor.dart';
 
 class ProjectsScreen extends StatefulWidget {
   const ProjectsScreen({super.key});
@@ -47,12 +55,26 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
             Expanded(
               child: Consumer<ProjectProvider>(
                 builder: (context, provider, _) {
+                  // Mostrar erro se houver
+                  if (provider.errorMessage != null && provider.projects.isEmpty) {
+                    return ErrorDisplayWidget(
+                      title: 'Erro ao carregar projetos',
+                      message: provider.errorMessage!,
+                      onRetry: () => provider.loadProjects(),
+                    );
+                  }
+                  
+                  // Mostrar loading apenas na primeira vez
                   if (provider.isLoading && provider.projects.isEmpty) {
                     return _buildLoading();
                   }
+                  
+                  // Mostrar empty state
                   if (provider.projects.isEmpty) {
                     return _buildEmptyState();
                   }
+                  
+                  // Mostrar conteúdo
                   return _buildContent(provider);
                 },
               ),
@@ -102,72 +124,33 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
   }
 
   Widget _buildLoading() {
-    return const Center(
-      child: CircularProgressIndicator(color: Color(0xFF1E88E5)),
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      children: [
+        const SizedBox(height: 20),
+        // Skeleton loaders
+        ...List.generate(3, (index) => const ProjectCardSkeleton()),
+      ],
     );
   }
 
   Widget _buildEmptyState() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(40),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // Ícone
-            Container(
-              width: 120,
-              height: 120,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    const Color(0xFF1E88E5).withOpacity(0.2),
-                    const Color(0xFF1E88E5).withOpacity(0.05),
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(30),
-              ),
-              child: Icon(
-                Icons.library_music_rounded,
-                size: 56,
-                color: const Color(0xFF1E88E5).withOpacity(0.6),
-              ),
-            ),
-            const SizedBox(height: 32),
-            const Text(
-              'Start your first project',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 22,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Create a home for your work-in-progress music',
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.5),
-                fontSize: 14,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 32),
-            ElevatedButton.icon(
-              onPressed: () => _navigateToCreateProject(),
-              icon: const Icon(Icons.add, size: 20),
-              label: const Text('New Project'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF1E88E5),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-          ],
+    return EmptyStateWidget(
+      title: 'Start your first project',
+      message: 'Create a home for your work-in-progress music',
+      icon: Icons.library_music_rounded,
+      iconColor: const Color(0xFF1E88E5),
+      action: ElevatedButton.icon(
+        onPressed: () => _navigateToCreateProject(),
+        icon: const Icon(Icons.add, size: 20),
+        label: const Text('New Project'),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFF1E88E5),
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
         ),
       ),
     );
@@ -217,7 +200,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
               const Spacer(),
               IconButton(
                 icon: const Icon(Icons.sort_rounded, color: Colors.white54, size: 20),
-                onPressed: () {},
+                onPressed: _showSortOptions,
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(),
               ),
@@ -296,6 +279,116 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     );
   }
 
+  void _showSortOptions() {
+    HapticFeedback.lightImpact();
+    final provider = context.read<ProjectProvider>();
+    
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: Color(0xFF1A1A1F),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              'Ordenar projetos',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 20),
+            _buildSortOption(
+              'Mais recentes',
+              Icons.access_time,
+              ProjectSortOption.newest,
+              provider.sortOption == ProjectSortOption.newest,
+            ),
+            _buildSortOption(
+              'Mais antigos',
+              Icons.history,
+              ProjectSortOption.oldest,
+              provider.sortOption == ProjectSortOption.oldest,
+            ),
+            _buildSortOption(
+              'Nome (A-Z)',
+              Icons.sort_by_alpha,
+              ProjectSortOption.nameAsc,
+              provider.sortOption == ProjectSortOption.nameAsc,
+            ),
+            _buildSortOption(
+              'Nome (Z-A)',
+              Icons.sort_by_alpha,
+              ProjectSortOption.nameDesc,
+              provider.sortOption == ProjectSortOption.nameDesc,
+            ),
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSortOption(String title, IconData icon, ProjectSortOption option, bool isSelected) {
+    return ListTile(
+      leading: Icon(icon, color: isSelected ? const Color(0xFF1E88E5) : Colors.white70),
+      title: Text(
+        title,
+        style: TextStyle(
+          color: isSelected ? const Color(0xFF1E88E5) : Colors.white,
+          fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+        ),
+      ),
+      trailing: isSelected
+          ? const Icon(Icons.check, color: Color(0xFF1E88E5))
+          : null,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      onTap: () {
+        HapticFeedback.lightImpact();
+        context.read<ProjectProvider>().setSortOption(option);
+        Navigator.pop(context);
+      },
+    );
+  }
+
+  void _showSettings() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A1F),
+        title: const Text(
+          'Configurações',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: const Text(
+          'As configurações estão em desenvolvimento.\nPor enquanto, você pode gerenciar o cache através do menu do perfil.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK', style: TextStyle(color: Color(0xFF1E88E5))),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showProfileMenu() {
     HapticFeedback.lightImpact();
     showModalBottomSheet(
@@ -320,10 +413,27 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
             ),
             const SizedBox(height: 24),
             ListTile(
+              leading: const Icon(Icons.storage_outlined, color: Colors.white70),
+              title: const Text('Gerenciar Cache', style: TextStyle(color: Colors.white)),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const CacheSettingsScreen(),
+                  ),
+                );
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.settings_outlined, color: Colors.white70),
               title: const Text('Configurações', style: TextStyle(color: Colors.white)),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              onTap: () => Navigator.pop(context),
+              onTap: () {
+                Navigator.pop(context);
+                _showSettings();
+              },
             ),
             ListTile(
               leading: const Icon(Icons.logout_rounded, color: Colors.redAccent),
@@ -402,7 +512,7 @@ class _HeaderIcon extends StatelessWidget {
   }
 }
 
-class _ProjectCard extends StatelessWidget {
+class _ProjectCard extends StatefulWidget {
   final Project project;
   final VoidCallback onTap;
   final Duration delay;
@@ -413,6 +523,62 @@ class _ProjectCard extends StatelessWidget {
     this.delay = Duration.zero,
   });
 
+  @override
+  State<_ProjectCard> createState() => _ProjectCardState();
+}
+
+class _ProjectCardState extends State<_ProjectCard> {
+  Color _color = const Color(0xFF1E88E5);
+  bool _isLoadingColor = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadColor();
+  }
+
+  @override
+  void didUpdateWidget(_ProjectCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.project.coverImageUrl != widget.project.coverImageUrl) {
+      _loadColor();
+    }
+  }
+
+  Future<void> _loadColor() async {
+    if (widget.project.coverImageUrl != null) {
+      try {
+        final imageRepo = ImageRepository();
+        final proxyUrl = widget.project.coverImageUrl!.startsWith('http')
+            ? widget.project.coverImageUrl!
+            : imageRepo.getProxyImageUrl(widget.project.coverImageUrl!);
+        
+        final color = await ColorExtractor.extractDominantColor(proxyUrl);
+        if (mounted) {
+          setState(() {
+            _color = color;
+            _isLoadingColor = false;
+          });
+        }
+      } catch (e) {
+        debugPrint('[ProjectCard] Erro ao extrair cor: $e');
+        if (mounted) {
+          setState(() {
+            _color = _generateColor(widget.project.name);
+            _isLoadingColor = false;
+          });
+        }
+      }
+    } else {
+      if (mounted) {
+        setState(() {
+          _color = _generateColor(widget.project.name);
+          _isLoadingColor = false;
+        });
+      }
+    }
+  }
+
   Color _generateColor(String name) {
     final hash = name.hashCode;
     final hue = (hash % 360).abs().toDouble();
@@ -421,7 +587,7 @@ class _ProjectCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = _generateColor(project.name);
+    final color = _color;
     
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
@@ -437,7 +603,7 @@ class _ProjectCard extends StatelessWidget {
         );
       },
       child: GestureDetector(
-        onTap: onTap,
+        onTap: widget.onTap,
         child: Container(
           margin: const EdgeInsets.only(bottom: 12),
           padding: const EdgeInsets.all(16),
@@ -467,14 +633,10 @@ class _ProjectCard extends StatelessWidget {
                     ),
                   ],
                 ),
-                child: project.coverImageUrl != null
+                child: widget.project.coverImageUrl != null
                     ? ClipRRect(
                         borderRadius: BorderRadius.circular(12),
-                        child: Image.network(
-                          project.coverImageUrl!,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => _buildIcon(color),
-                        ),
+                        child: _buildCoverImage(widget.project.coverImageUrl!, color),
                       )
                     : _buildIcon(color),
               ),
@@ -486,7 +648,7 @@ class _ProjectCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      project.name,
+                      widget.project.name,
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 15,
@@ -497,9 +659,9 @@ class _ProjectCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      project.description?.isNotEmpty == true
-                          ? project.description!
-                          : _formatDate(project.createdAt),
+                      widget.project.description?.isNotEmpty == true
+                          ? widget.project.description!
+                          : _formatDate(widget.project.createdAt),
                       style: TextStyle(
                         color: Colors.white.withOpacity(0.45),
                         fontSize: 12,
@@ -521,6 +683,20 @@ class _ProjectCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildCoverImage(String coverImageUrl, Color color) {
+    final imageRepo = ImageRepository();
+    final proxyUrl = coverImageUrl.startsWith('http')
+        ? coverImageUrl
+        : imageRepo.getProxyImageUrl(coverImageUrl);
+    
+    return AuthenticatedImage(
+      imageUrl: proxyUrl,
+      fit: BoxFit.cover,
+      placeholder: _buildIcon(color),
+      errorWidget: _buildIcon(color),
     );
   }
 
@@ -587,7 +763,7 @@ class _AddProjectButton extends StatelessWidget {
   }
 }
 
-class _GlobalMiniPlayer extends StatelessWidget {
+class _GlobalMiniPlayer extends StatefulWidget {
   final String trackName;
   final String? projectId;
   final bool isPlaying;
@@ -603,9 +779,58 @@ class _GlobalMiniPlayer extends StatelessWidget {
   });
 
   @override
+  State<_GlobalMiniPlayer> createState() => _GlobalMiniPlayerState();
+}
+
+class _GlobalMiniPlayerState extends State<_GlobalMiniPlayer> {
+  String? _coverImageUrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCoverImage();
+  }
+
+  @override
+  void didUpdateWidget(_GlobalMiniPlayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.projectId != widget.projectId) {
+      _loadCoverImage();
+    }
+  }
+
+  Future<void> _loadCoverImage() async {
+    if (widget.projectId == null) {
+      setState(() => _coverImageUrl = null);
+      return;
+    }
+
+    try {
+      final projectRepo = ProjectRepository();
+      final project = await projectRepo.getProjectById(widget.projectId!);
+      if (project != null && project.coverImageUrl != null) {
+        final imageRepo = ImageRepository();
+        final proxyUrl = imageRepo.getProxyImageUrl(project.coverImageUrl!);
+        if (mounted) {
+          setState(() => _coverImageUrl = proxyUrl);
+        }
+      } else {
+        if (mounted) {
+          setState(() => _coverImageUrl = null);
+        }
+      }
+    } catch (e) {
+      debugPrint('[MiniPlayer] Erro ao carregar capa: $e');
+      if (mounted) {
+        setState(() => _coverImageUrl = null);
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: widget.onTap,
       child: Container(
         margin: const EdgeInsets.all(16),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -622,17 +847,17 @@ class _GlobalMiniPlayer extends StatelessWidget {
         ),
         child: Row(
           children: [
-            // Indicador de playing
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: const Color(0xFF1E88E5).withOpacity(0.2),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: isPlaying
-                  ? const _PlayingBars()
-                  : const Icon(Icons.music_note, color: Color(0xFF1E88E5), size: 20),
+            // Capa do projeto ou indicador de playing
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: _coverImageUrl != null
+                  ? AuthenticatedImage(
+                      imageUrl: _coverImageUrl!,
+                      fit: BoxFit.cover,
+                      placeholder: _buildPlaceholder(),
+                      errorWidget: _buildPlaceholder(),
+                    )
+                  : _buildPlaceholder(),
             ),
             const SizedBox(width: 12),
             
@@ -643,7 +868,7 @@ class _GlobalMiniPlayer extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    trackName,
+                    widget.trackName,
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 14,
@@ -654,7 +879,7 @@ class _GlobalMiniPlayer extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    isPlaying ? 'Playing' : 'Paused',
+                    widget.isPlaying ? 'Playing' : 'Paused',
                     style: TextStyle(
                       color: Colors.white.withOpacity(0.4),
                       fontSize: 11,
@@ -666,7 +891,7 @@ class _GlobalMiniPlayer extends StatelessWidget {
             
             // Play/Pause
             GestureDetector(
-              onTap: onPlayPause,
+              onTap: widget.onPlayPause,
               child: Container(
                 width: 44,
                 height: 44,
@@ -675,7 +900,7 @@ class _GlobalMiniPlayer extends StatelessWidget {
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
-                  isPlaying ? Icons.pause : Icons.play_arrow,
+                  widget.isPlaying ? Icons.pause : Icons.play_arrow,
                   color: Colors.white,
                   size: 24,
                 ),
@@ -684,6 +909,20 @@ class _GlobalMiniPlayer extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildPlaceholder() {
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E88E5).withOpacity(0.2),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: widget.isPlaying
+          ? const _PlayingBars()
+          : const Icon(Icons.music_note, color: Color(0xFF1E88E5), size: 20),
     );
   }
 }

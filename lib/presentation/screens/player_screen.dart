@@ -8,7 +8,11 @@ import 'package:just_audio/just_audio.dart';
 import '../../data/models/audio_version.dart';
 import '../../data/repositories/project_repository.dart';
 import '../../data/models/project.dart';
+import '../../data/repositories/image_repository.dart';
+import '../../core/utils/color_extractor.dart';
 import '../providers/audio_player_provider.dart';
+import '../widgets/authenticated_image.dart';
+import '../widgets/real_waveform_widget.dart';
 
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({super.key});
@@ -57,7 +61,42 @@ class _PlayerScreenState extends State<PlayerScreen>
       if (mounted && project != null) {
         setState(() {
           _project = project;
-          _accentColor = _generateProjectColor(project.name);
+        });
+        
+        // Extrair cor da capa se existir
+        if (project.coverImageUrl != null) {
+          final imageRepo = ImageRepository();
+          final proxyUrl = project.coverImageUrl!.startsWith('http')
+              ? project.coverImageUrl!
+              : imageRepo.getProxyImageUrl(project.coverImageUrl!);
+          _extractColorFromCover(proxyUrl);
+        } else {
+          // Fallback para cor baseada no nome
+          if (mounted) {
+            setState(() {
+              _accentColor = _generateProjectColor(project.name);
+            });
+          }
+        }
+      }
+    }
+  }
+
+  Future<void> _extractColorFromCover(String imageUrl) async {
+    try {
+      final color = await ColorExtractor.extractDominantColor(imageUrl);
+      if (mounted) {
+        setState(() {
+          _accentColor = color;
+        });
+        _colorController.forward(from: 0.0);
+      }
+    } catch (e) {
+      debugPrint('[PlayerScreen] Erro ao extrair cor: $e');
+      // Fallback para cor baseada no nome
+      if (mounted && _project != null) {
+        setState(() {
+          _accentColor = _generateProjectColor(_project!.name);
         });
       }
     }
@@ -244,14 +283,24 @@ class _PlayerScreenState extends State<PlayerScreen>
         child: ClipRRect(
           borderRadius: BorderRadius.circular(20),
           child: _project?.coverImageUrl != null
-              ? Image.network(
-                  _project!.coverImageUrl!,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => _buildPlaceholderArtwork(),
-                )
+              ? _buildCoverImage(_project!.coverImageUrl!)
               : _buildPlaceholderArtwork(),
         ),
       ),
+    );
+  }
+
+  Widget _buildCoverImage(String coverImageUrl) {
+    final imageRepo = ImageRepository();
+    final proxyUrl = coverImageUrl.startsWith('http')
+        ? coverImageUrl
+        : imageRepo.getProxyImageUrl(coverImageUrl);
+    
+    return AuthenticatedImage(
+      imageUrl: proxyUrl,
+      fit: BoxFit.cover,
+      placeholder: _buildPlaceholderArtwork(),
+      errorWidget: _buildPlaceholderArtwork(),
     );
   }
 
@@ -378,13 +427,11 @@ class _PlayerScreenState extends State<PlayerScreen>
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(16),
-                  child: CustomPaint(
-                    size: const Size(double.infinity, 64),
-                    painter: _WaveformPainter(
-                      progress: progress.clamp(0.0, 1.0),
-                      accentColor: _accentColor,
-                      trackId: playerProvider.getCurrentVersion()?.id,
-                    ),
+                  child: RealWaveformWidget(
+                    progress: progress.clamp(0.0, 1.0),
+                    accentColor: _accentColor,
+                    trackId: playerProvider.getCurrentVersion()?.id,
+                    audioUrl: playerProvider.getCurrentVersion()?.fileUrl,
                   ),
                 ),
               ),
@@ -675,7 +722,10 @@ class _PlayerScreenState extends State<PlayerScreen>
           ListTile(
             leading: Icon(Icons.info_outline, color: _accentColor),
             title: const Text('Informações da faixa', style: TextStyle(color: Colors.white)),
-            onTap: () => Navigator.pop(context),
+            onTap: () {
+              Navigator.pop(context);
+              _showTrackInfo(context.watch<AudioPlayerProvider>().getCurrentVersion());
+            },
           ),
           ListTile(
             leading: Icon(Icons.download_outlined, color: _accentColor),
@@ -691,6 +741,84 @@ class _PlayerScreenState extends State<PlayerScreen>
         ],
       ),
     );
+  }
+
+  void _showTrackInfo(AudioVersion? version) {
+    if (version == null) return;
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A1F),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text(
+          'Informações da faixa',
+          style: TextStyle(color: Colors.white, fontSize: 20),
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildInfoRow('Nome', version.name),
+              const SizedBox(height: 12),
+              if (version.description != null && version.description!.isNotEmpty) ...[
+                _buildInfoRow('Descrição', version.description!),
+                const SizedBox(height: 12),
+              ],
+              _buildInfoRow('Formato', version.format?.toUpperCase() ?? 'WAV'),
+              const SizedBox(height: 12),
+              _buildInfoRow('Tamanho', version.formattedFileSize),
+              const SizedBox(height: 12),
+              _buildInfoRow('Duração', version.formattedDuration),
+              const SizedBox(height: 12),
+              _buildInfoRow('Master', version.isMaster ? 'Sim' : 'Não'),
+              const SizedBox(height: 12),
+              _buildInfoRow('Criado em', _formatDate(version.createdAt)),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Fechar', style: TextStyle(color: Color(0xFF1E88E5))),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoRow(String label, String value) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 100,
+          child: Text(
+            '$label:',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.6),
+              fontSize: 14,
+            ),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _formatDate(DateTime date) {
+    final months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+    return '${date.day} ${months[date.month - 1]} ${date.year}';
   }
 
   void _showPlaylist(AudioPlayerProvider playerProvider) {
@@ -720,7 +848,7 @@ class _PlayerScreenState extends State<PlayerScreen>
               ),
             ),
             const SizedBox(height: 20),
-            Text(
+            const Text(
               'Fila de reprodução',
               style: TextStyle(
                 color: Colors.white,
@@ -1016,6 +1144,7 @@ class _WaveformPainter extends CustomPainter {
   final double progress;
   final Color accentColor;
   final String? trackId;
+  final List<double>? waveformData; // Dados de waveform pré-carregados
 
   static final Map<String, List<double>> _waveCache = {};
 
@@ -1023,12 +1152,8 @@ class _WaveformPainter extends CustomPainter {
     required this.progress,
     required this.accentColor,
     this.trackId,
+    this.waveformData,
   });
-
-  List<double> get _waveData {
-    final key = trackId ?? 'default';
-    return _waveCache.putIfAbsent(key, () => _generateWave(key));
-  }
 
   static List<double> _generateWave(String seed) {
     final hash = seed.hashCode;
@@ -1083,14 +1208,17 @@ class _WaveformPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final barWidth = size.width / _waveData.length;
+    // Usar dados fornecidos ou gerar fallback
+    final waveData = waveformData ?? 
+        _waveCache.putIfAbsent(trackId ?? 'default', () => _generateWave(trackId ?? 'default'));
+    final barWidth = size.width / waveData.length;
     final centerY = size.height / 2;
     final maxHeight = size.height * 0.85;
     final progressX = size.width * progress;
 
-    for (int i = 0; i < _waveData.length; i++) {
+    for (int i = 0; i < waveData.length; i++) {
       final x = i * barWidth + barWidth / 2;
-      final barHeight = _waveData[i] * maxHeight;
+      final barHeight = waveData[i] * maxHeight;
       final isPlayed = x <= progressX;
 
       final paint = Paint()

@@ -155,7 +155,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
                         children: [
                           // Anterior
                           IconButton(
-                            icon: Icon(Icons.skip_previous),
+                            icon: const Icon(Icons.skip_previous),
                             onPressed: isLoading
                                 ? null
                                 : widget.playerProvider.seekToPrevious,
@@ -180,7 +180,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
 
                           // Próximo
                           IconButton(
-                            icon: Icon(Icons.skip_next),
+                            icon: const Icon(Icons.skip_next),
                             onPressed: isLoading
                                 ? null
                                 : widget.playerProvider.seekToNext,

@@ -203,7 +203,7 @@ class ProjectCard extends StatelessWidget {
               ),
               
               // Seta
-              Icon(
+              const Icon(
                 Icons.chevron_right_rounded,
                 color: AppTheme.textTertiary,
               ),
@@ -314,7 +314,7 @@ class AudioTrackCard extends StatelessWidget {
                   decoration: BoxDecoration(
                     gradient: isPlaying
                         ? AppTheme.primaryGradient
-                        : LinearGradient(
+                        : const LinearGradient(
                             colors: [
                               AppTheme.surfaceHighlight,
                               AppTheme.surfaceElevated,
@@ -397,7 +397,7 @@ class AudioTrackCard extends StatelessWidget {
                     Row(
                       children: [
                         if (duration != null) ...[
-                          Icon(Icons.timer_outlined, 
+                          const Icon(Icons.timer_outlined, 
                               size: 12, 
                               color: AppTheme.textTertiary),
                           const SizedBox(width: 4),
@@ -410,7 +410,7 @@ class AudioTrackCard extends StatelessWidget {
                           const SizedBox(width: 12),
                         ],
                         if (fileSize != null) ...[
-                          Icon(Icons.storage_outlined, 
+                          const Icon(Icons.storage_outlined, 
                               size: 12, 
                               color: AppTheme.textTertiary),
                           const SizedBox(width: 4),
@@ -431,7 +431,7 @@ class AudioTrackCard extends StatelessWidget {
               if (isPlaying)
                 _MiniWaveform()
               else
-                Icon(
+                const Icon(
                   Icons.more_vert_rounded,
                   color: AppTheme.textTertiary,
                 ),

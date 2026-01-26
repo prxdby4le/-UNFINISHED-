@@ -1,6 +1,7 @@
 // lib/data/repositories/audio_repository.dart
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../../core/config/supabase_config.dart';
 import '../../core/config/r2_config.dart';
@@ -172,6 +173,30 @@ class AudioRepository {
   Future<void> deleteVersion(String id) async {
     // TODO: Deletar arquivo do R2 também
     await _supabase.from('audio_versions').delete().eq('id', id);
+  }
+
+  /// Obtém URL assinada para download
+  Future<String> getSignedUrl(String filePath) async {
+    if (filePath.startsWith('http')) return filePath;
+    
+    final user = _supabase.auth.currentUser;
+    if (user == null) {
+      throw Exception('Usuário não autenticado');
+    }
+
+    final functionUrl = '${SupabaseConfig.supabaseUrl}/functions/v1/r2-proxy/$filePath';
+    final headers = R2Config.getAuthHeaders();
+    headers['Content-Type'] = 'application/json';
+    headers['Accept'] = 'application/json';
+
+    final response = await http.get(Uri.parse(functionUrl), headers: headers);
+    
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body) as Map<String, dynamic>;
+      return data['url'] as String;
+    } else {
+      throw Exception('Erro ao obter URL assinada: ${response.statusCode}');
+    }
   }
 
   /// Obtém MIME type baseado na extensão

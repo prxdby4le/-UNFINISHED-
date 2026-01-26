@@ -1,48 +1,58 @@
 #!/bin/bash
-# Script de deploy da Edge Function r2-proxy
 
-echo "🚀 Fazendo deploy da Edge Function r2-proxy..."
+# Script para fazer deploy da Edge Function r2-proxy
+# Garante que o CORS está configurado corretamente
+
+set -e
+
+echo "🚀 Deploying r2-proxy Edge Function..."
 echo ""
 
+# Verificar se supabase CLI está instalado
+if ! command -v supabase &> /dev/null; then
+    echo "❌ Supabase CLI não encontrado!"
+    echo "   Instale com: npm install -g supabase"
+    exit 1
+fi
+
 # Verificar se está logado
-echo "📋 Verificando login no Supabase..."
-if ! supabase projects list &>/dev/null; then
-    echo "❌ Você não está logado no Supabase CLI"
+echo "📋 Verificando autenticação..."
+if ! supabase projects list &> /dev/null; then
+    echo "❌ Não autenticado no Supabase!"
     echo "   Execute: supabase login"
     exit 1
 fi
 
-# Verificar se o projeto está linkado
-echo "📋 Verificando se o projeto está linkado..."
-if ! supabase status &>/dev/null; then
-    echo "⚠️  Projeto não está linkado. Fazendo link..."
-    supabase link --project-ref lkdigbdgpaquhevpfrdf
-fi
-
 # Fazer deploy
-echo ""
 echo "📦 Fazendo deploy da função..."
-echo "   ⚠️  IMPORTANTE: Usando --no-verify-jwt para permitir OPTIONS (preflight)"
-echo ""
-
 supabase functions deploy r2-proxy --no-verify-jwt
 
 if [ $? -eq 0 ]; then
     echo ""
     echo "✅ Deploy concluído com sucesso!"
     echo ""
-    echo "📝 Próximos passos:"
-    echo "   1. Recarregue o app completamente (Ctrl+Shift+R ou Cmd+Shift+R)"
-    echo "   2. Teste novamente - agora deve retornar JSON com URL assinada"
+    echo "🧪 Testando CORS..."
     echo ""
-    echo "🔍 Para verificar os logs:"
-    echo "   - Supabase Dashboard > Edge Functions > r2-proxy > Logs"
-    echo "   - Procure por: '[R2-Proxy] GET request - Generating signed URL'"
+    
+    # Testar OPTIONS (preflight)
+    echo "Testando OPTIONS (preflight):"
+    curl -X OPTIONS \
+      "https://lkdigbdgpaquhevpfrdf.supabase.co/functions/v1/r2-proxy/test" \
+      -H "Origin: http://localhost:6769" \
+      -H "Access-Control-Request-Method: GET" \
+      -H "Access-Control-Request-Headers: authorization" \
+      -v 2>&1 | grep -E "(HTTP|Access-Control|200|204)" || true
+    
+    echo ""
+    echo "✅ Se você viu 'Access-Control-Allow-Origin' acima, o CORS está funcionando!"
+    echo ""
+    echo "📝 Próximos passos:"
+    echo "   1. Limpe o cache do navegador (Ctrl+Shift+R)"
+    echo "   2. Recarregue a aplicação"
+    echo "   3. Verifique os logs no Supabase Dashboard se ainda houver problemas"
 else
     echo ""
-    echo "❌ Erro no deploy. Verifique:"
-    echo "   - Se está logado: supabase login"
-    echo "   - Se o projeto está linkado: supabase link --project-ref lkdigbdgpaquhevpfrdf"
-    echo "   - Se as variáveis de ambiente estão configuradas no Dashboard"
+    echo "❌ Erro no deploy!"
+    echo "   Verifique os logs acima para mais detalhes"
     exit 1
 fi

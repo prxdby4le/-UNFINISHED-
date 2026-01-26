@@ -303,7 +303,7 @@ class _UploadAudioScreenState extends State<UploadAudioScreen> {
                     Switch(
                       value: _isMaster,
                       onChanged: (value) => setState(() => _isMaster = value),
-                      activeColor: const Color(0xFFFFD700),
+                      activeThumbColor: const Color(0xFFFFD700),
                     ),
                   ],
                 ),

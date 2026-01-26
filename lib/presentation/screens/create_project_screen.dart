@@ -1,6 +1,11 @@
 // lib/presentation/screens/create_project_screen.dart
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:provider/provider.dart';
+import 'package:file_picker/file_picker.dart';
+import 'dart:io';
+import 'dart:typed_data';
+import '../../data/repositories/image_repository.dart';
 import '../providers/project_provider.dart';
 import 'project_detail_screen.dart';
 
@@ -15,14 +20,60 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _descriptionController = TextEditingController();
+  final _imageRepository = ImageRepository();
   bool _isLoading = false;
   String? _errorMessage;
+  String? _selectedImagePath;
+  Uint8List? _selectedImageBytes;
 
   @override
   void dispose() {
     _nameController.dispose();
     _descriptionController.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickImage() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        allowMultiple: false,
+        withData: kIsWeb, // No web, precisamos dos bytes diretamente
+      );
+
+      if (result != null && result.files.single.size > 0) {
+        Uint8List bytes;
+        String? filePath;
+        
+        if (kIsWeb) {
+          // No web, usar bytes diretamente
+          bytes = result.files.single.bytes!;
+          filePath = result.files.single.name;
+        } else {
+          // Em mobile/desktop, usar path
+          if (result.files.single.path == null) {
+            throw Exception('Caminho do arquivo não disponível');
+          }
+          final file = File(result.files.single.path!);
+          bytes = await file.readAsBytes();
+          filePath = file.path;
+        }
+        
+        setState(() {
+          _selectedImagePath = filePath;
+          _selectedImageBytes = bytes;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao selecionar imagem: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _handleCreate() async {
@@ -34,11 +85,37 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
     });
 
     try {
+      String? coverImageUrl;
+      
+      // Upload da imagem se houver
+      if (_selectedImageBytes != null) {
+        try {
+          // Obter nome do arquivo corretamente (web ou mobile)
+          final fileName = kIsWeb 
+              ? (_selectedImagePath ?? 'cover.jpg')
+              : (_selectedImagePath?.split('/').last ?? 'cover.jpg');
+          coverImageUrl = await _imageRepository.uploadImage(
+            imageBytes: _selectedImageBytes!,
+            fileName: fileName,
+            folder: 'covers',
+          );
+        } catch (e) {
+          if (mounted) {
+            setState(() {
+              _errorMessage = 'Erro ao fazer upload da capa: $e';
+              _isLoading = false;
+            });
+          }
+          return;
+        }
+      }
+
       final project = await context.read<ProjectProvider>().createProject(
         name: _nameController.text.trim(),
         description: _descriptionController.text.trim().isEmpty
             ? null
             : _descriptionController.text.trim(),
+        coverImageUrl: coverImageUrl,
       );
 
       if (mounted && project != null) {
@@ -108,25 +185,31 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Cover image placeholder
+              // Cover image
               Center(
                 child: GestureDetector(
-                  onTap: () {
-                    // TODO: Pick cover image
-                  },
+                  onTap: _pickImage,
                   child: Container(
                     width: 180,
                     height: 180,
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(24),
-                      gradient: const LinearGradient(
-                        colors: [
-                          Color(0xFFE91E8C),
-                          Color(0xFFFF6EC7),
-                        ],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
+                      gradient: _selectedImageBytes == null
+                          ? const LinearGradient(
+                              colors: [
+                                Color(0xFFE91E8C),
+                                Color(0xFFFF6EC7),
+                              ],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            )
+                          : null,
+                      image: _selectedImageBytes != null
+                          ? DecorationImage(
+                              image: MemoryImage(_selectedImageBytes!),
+                              fit: BoxFit.cover,
+                            )
+                          : null,
                       boxShadow: [
                         BoxShadow(
                           color: const Color(0xFFE91E8C).withOpacity(0.4),
@@ -135,33 +218,54 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
                         ),
                       ],
                     ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Container(
-                          width: 60,
-                          height: 60,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Colors.white.withOpacity(0.2),
+                    child: _selectedImageBytes == null
+                        ? Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Container(
+                                width: 60,
+                                height: 60,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: Colors.white.withOpacity(0.2),
+                                ),
+                                child: Icon(
+                                  Icons.add_photo_alternate_outlined,
+                                  size: 28,
+                                  color: Colors.white.withOpacity(0.9),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                'Add Cover',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.9),
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          )
+                        : Stack(
+                            children: [
+                              Positioned(
+                                top: 8,
+                                right: 8,
+                                child: Container(
+                                  padding: const EdgeInsets.all(6),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withOpacity(0.6),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                    Icons.edit,
+                                    color: Colors.white,
+                                    size: 16,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
-                          child: Icon(
-                            Icons.add_photo_alternate_outlined,
-                            size: 28,
-                            color: Colors.white.withOpacity(0.9),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          'Add Cover',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.9),
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
                   ),
                 ),
               ),

@@ -34,6 +34,12 @@ dependencies:
   # Audio Visualization
   audio_video_progress_bar: ^2.0.1
 
+  # Image Color Extraction
+  palette_generator: ^0.3.3+1
+
+  # Audio Waveform (usando just_audio para análise)
+  # flutter_audio_waveforms requer configuração adicional, vamos usar análise direta
+
   # Utilitários
   intl: ^0.18.1
   crypto: ^3.0.3

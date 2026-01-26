@@ -3,15 +3,47 @@ import 'package:flutter/foundation.dart';
 import '../../data/repositories/project_repository.dart';
 import '../../data/models/project.dart';
 
+enum ProjectSortOption {
+  newest,
+  oldest,
+  nameAsc,
+  nameDesc,
+}
+
 class ProjectProvider extends ChangeNotifier {
   final ProjectRepository _repository = ProjectRepository();
   List<Project> _projects = [];
   bool _isLoading = false;
   String? _errorMessage;
+  ProjectSortOption _sortOption = ProjectSortOption.newest;
 
-  List<Project> get projects => _projects;
+  List<Project> get projects {
+    final sorted = List<Project>.from(_projects);
+    switch (_sortOption) {
+      case ProjectSortOption.newest:
+        sorted.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        break;
+      case ProjectSortOption.oldest:
+        sorted.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+        break;
+      case ProjectSortOption.nameAsc:
+        sorted.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        break;
+      case ProjectSortOption.nameDesc:
+        sorted.sort((a, b) => b.name.toLowerCase().compareTo(a.name.toLowerCase()));
+        break;
+    }
+    return sorted;
+  }
+  
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
+  ProjectSortOption get sortOption => _sortOption;
+  
+  void setSortOption(ProjectSortOption option) {
+    _sortOption = option;
+    notifyListeners();
+  }
 
   /// Carrega todos os projetos
   Future<void> loadProjects({bool includeArchived = false}) async {

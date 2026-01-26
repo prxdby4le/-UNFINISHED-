@@ -1,14 +1,30 @@
 // lib/presentation/screens/project_detail_screen.dart
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../data/repositories/project_repository.dart';
 import '../../data/repositories/audio_repository.dart';
 import '../../data/repositories/library_repository.dart';
+import '../../data/repositories/feedback_repository.dart';
 import '../../data/models/project.dart';
 import '../../data/models/audio_version.dart';
 import '../providers/audio_player_provider.dart';
+import '../widgets/feedback_list_widget.dart' show FeedbackListWidget, FeedbackListWidgetState;
+import '../widgets/feedback_form_widget.dart';
+import '../widgets/common/loading_widget.dart';
+import '../widgets/common/error_widget.dart';
+import '../widgets/common/empty_state_widget.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'dart:io';
+import 'dart:typed_data';
+import '../widgets/edit_version_modal.dart';
+import '../widgets/edit_project_modal.dart';
+import '../widgets/authenticated_image.dart';
+import '../../data/repositories/image_repository.dart';
+import '../../core/utils/color_extractor.dart';
 import 'upload_audio_screen.dart';
 import 'player_screen.dart';
 
@@ -29,9 +45,11 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
   bool _isInLibrary = false;
   bool _isTogglingLibrary = false;
   final _libraryRepo = LibraryRepository();
+  final _imageRepo = ImageRepository();
   
   // Cor dinâmica baseada na capa
   Color _dominantColor = const Color(0xFF1E88E5);
+  String? _coverImageUrl; // URL assinada da capa
   
   late AnimationController _colorController;
 
@@ -51,7 +69,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
     super.dispose();
   }
 
-  Future<void> _loadData() async {
+  Future<void> _loadData({bool preserveCoverUrl = false}) async {
     if (!mounted) return;
     setState(() => _isLoading = true);
 
@@ -71,10 +89,34 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
           _versions = results[1] as List<AudioVersion>;
           _isInLibrary = results[2] as bool;
           _isLoading = false;
-          
-          // Gerar cor baseada no nome do projeto (simulação)
-          _dominantColor = _generateProjectColor(_project?.name ?? '');
         });
+        
+        // Obter URL do proxy para a capa (evita CORS) e extrair cores
+        if (_project?.coverImageUrl != null) {
+          String? proxyUrl;
+          if (!_project!.coverImageUrl!.startsWith('http')) {
+            // Usar proxy diretamente (evita CORS)
+            proxyUrl = _imageRepo.getProxyImageUrl(_project!.coverImageUrl!);
+          } else {
+            proxyUrl = _project!.coverImageUrl;
+          }
+          
+          if (mounted && proxyUrl != null) {
+            setState(() {
+              _coverImageUrl = proxyUrl;
+            });
+            
+            // Extrair cor dominante da capa
+            _extractColorFromCover(proxyUrl);
+          }
+        } else {
+          if (mounted) {
+            setState(() {
+              _coverImageUrl = null;
+            });
+          }
+        }
+        
         _colorController.forward();
       }
     } catch (e) {
@@ -84,7 +126,28 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
     }
   }
   
-  // Gera uma cor única baseada no nome do projeto
+  // Extrai cor dominante da capa do projeto
+  Future<void> _extractColorFromCover(String imageUrl) async {
+    try {
+      final color = await ColorExtractor.extractDominantColor(imageUrl);
+      if (mounted) {
+        setState(() {
+          _dominantColor = color;
+        });
+        _colorController.forward(from: 0.0);
+      }
+    } catch (e) {
+      debugPrint('[ProjectDetail] Erro ao extrair cor: $e');
+      // Fallback para cor baseada no nome
+      if (mounted) {
+        setState(() {
+          _dominantColor = _generateProjectColor(_project?.name ?? '');
+        });
+      }
+    }
+  }
+
+  // Gera uma cor única baseada no nome do projeto (fallback)
   Color _generateProjectColor(String name) {
     if (name.isEmpty) return const Color(0xFF1E88E5);
     
@@ -125,18 +188,9 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
     if (_isLoading) {
       return Scaffold(
         backgroundColor: const Color(0xFF0A0A0F),
-        body: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircularProgressIndicator(color: _dominantColor),
-              const SizedBox(height: 16),
-              Text(
-                'Carregando projeto...',
-                style: TextStyle(color: Colors.white.withOpacity(0.5)),
-              ),
-            ],
-          ),
+        body: LoadingWidget(
+          message: 'Carregando projeto...',
+          color: _dominantColor,
         ),
       );
     }
@@ -144,12 +198,21 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
     if (_project == null) {
       return Scaffold(
         backgroundColor: const Color(0xFF0A0A0F),
-        appBar: AppBar(backgroundColor: Colors.transparent),
-        body: const Center(
-          child: Text('Projeto não encontrado', style: TextStyle(color: Colors.white70)),
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+        ),
+        body: ErrorDisplayWidget(
+          title: 'Projeto não encontrado',
+          message: 'O projeto que você está procurando não existe ou foi removido.',
+          onRetry: () {
+            Navigator.pop(context);
+          },
+          retryLabel: 'Voltar',
         ),
       );
     }
+    
 
     return Scaffold(
       backgroundColor: const Color(0xFF0A0A0F),
@@ -159,27 +222,34 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
           _buildDynamicBackground(),
           
           // Conteúdo principal
-          CustomScrollView(
-            physics: const BouncingScrollPhysics(),
-            slivers: [
-              // App Bar com gradiente
-              _buildSliverAppBar(),
-              
-              // Conteúdo
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const SizedBox(height: 24),
-                      _buildTracksList(),
-                      const SizedBox(height: 120), // Espaço para mini-player
-                    ],
+          RefreshIndicator(
+            onRefresh: _loadData,
+            color: _dominantColor,
+            backgroundColor: const Color(0xFF1A1A1F),
+            child: CustomScrollView(
+              physics: const AlwaysScrollableScrollPhysics(
+                parent: BouncingScrollPhysics(),
+              ),
+              slivers: [
+                // App Bar com gradiente
+                _buildSliverAppBar(),
+                
+                // Conteúdo
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(height: 24),
+                        _buildTracksList(),
+                        const SizedBox(height: 120), // Espaço para mini-player
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
           
           // Mini-player fixo na parte inferior
@@ -242,9 +312,9 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
               color: Colors.black.withOpacity(0.3),
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.share_outlined, color: Colors.white, size: 20),
+            child: const Icon(Icons.more_vert, color: Colors.white, size: 20),
           ),
-          onPressed: () {},
+          onPressed: () => _showProjectOptions(),
         ),
         const SizedBox(width: 8),
       ],
@@ -282,11 +352,12 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(12),
-                    child: _project?.coverImageUrl != null
-                        ? Image.network(
-                            _project!.coverImageUrl!,
+                    child: _coverImageUrl != null
+                        ? AuthenticatedImage(
+                            imageUrl: _coverImageUrl!,
                             fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => _buildPlaceholderCover(),
+                            placeholder: _buildPlaceholderCover(),
+                            errorWidget: _buildPlaceholderCover(),
                           )
                         : _buildPlaceholderCover(),
                   ),
@@ -364,7 +435,11 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
               _ActionIcon(
                 icon: Icons.download_outlined,
                 color: _dominantColor,
-                onPressed: () {},
+                onPressed: () {
+                  if (_versions.isNotEmpty) {
+                    _downloadVersion(_versions[0]);
+                  }
+                },
               ),
               const SizedBox(width: 12),
               
@@ -405,38 +480,23 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
 
   Widget _buildTracksList() {
     if (_versions.isEmpty) {
-      return Container(
-        padding: const EdgeInsets.all(40),
-        child: Column(
-          children: [
-            Icon(
-              Icons.music_off_outlined,
-              size: 64,
-              color: Colors.white.withOpacity(0.2),
+      return EmptyStateWidget(
+        title: 'Nenhuma faixa ainda',
+        message: 'Adicione sua primeira faixa para começar',
+        icon: Icons.music_off_outlined,
+        iconColor: _dominantColor,
+        action: ElevatedButton.icon(
+          onPressed: () => _navigateToUpload(),
+          icon: const Icon(Icons.add),
+          label: const Text('Adicionar faixa'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: _dominantColor,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
             ),
-            const SizedBox(height: 16),
-            Text(
-              'Nenhuma faixa ainda',
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.5),
-                fontSize: 16,
-              ),
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton.icon(
-              onPressed: () => _navigateToUpload(),
-              icon: const Icon(Icons.add),
-              label: const Text('Adicionar faixa'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _dominantColor,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(24),
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
       );
     }
@@ -448,6 +508,25 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
         Container(
           height: 1,
           color: Colors.white.withOpacity(0.1),
+        ),
+        const SizedBox(height: 16),
+        
+        // Botão de adicionar faixa (sempre visível)
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: OutlinedButton.icon(
+            onPressed: () => _navigateToUpload(),
+            icon: const Icon(Icons.add, size: 18),
+            label: const Text('Adicionar faixa'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: _dominantColor,
+              side: BorderSide(color: _dominantColor.withOpacity(0.5)),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
         ),
         const SizedBox(height: 16),
         
@@ -464,6 +543,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
               accentColor: _dominantColor,
               onTap: () => _playTrack(version, index),
               onMore: () => _showTrackOptions(version),
+              onComments: () => _showFeedbackModal(context, version),
             );
           },
         ),
@@ -537,6 +617,114 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
     );
   }
 
+  void _showFeedbackModal(BuildContext context, AudioVersion version) {
+    final playerProvider = context.read<AudioPlayerProvider>();
+    // Usar GlobalKey para acessar o state do widget
+    final feedbackListKey = GlobalKey<FeedbackListWidgetState>();
+    
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1A1A1F),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.7,
+        minChildSize: 0.5,
+        maxChildSize: 0.9,
+        expand: false,
+        builder: (context, scrollController) => Column(
+          children: [
+            // Header
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.comment_outlined,
+                    color: _dominantColor,
+                    size: 24,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Comentários',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          version.name,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.6),
+                            fontSize: 14,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
+                    color: Colors.white,
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: Color(0xFF2A2A2F)),
+            // Lista de comentários
+            Expanded(
+              child: FeedbackListWidget(
+                key: feedbackListKey,
+                audioVersionId: version.id,
+                onCountChanged: (count) {
+                  // Atualizar contagem se necessário
+                },
+              ),
+            ),
+            // Formulário de comentário
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1A1A1F),
+                border: Border(
+                  top: BorderSide(
+                    color: Colors.white.withOpacity(0.1),
+                    width: 1,
+                  ),
+                ),
+              ),
+              child: StreamBuilder<Duration>(
+                stream: playerProvider.getCurrentVersion()?.id == version.id
+                    ? playerProvider.positionStream
+                    : null,
+                builder: (context, snapshot) {
+                  final timestamp = snapshot.data?.inSeconds;
+                  return FeedbackFormWidget(
+                    audioVersionId: version.id,
+                    currentTimestamp: timestamp,
+                    onSubmitted: () {
+                      // Recarregar lista de comentários
+                      feedbackListKey.currentState?.reload();
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _navigateToUpload() async {
     final result = await Navigator.push(
       context,
@@ -550,47 +738,8 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
   }
 
   void _showMoreOptions() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: const Color(0xFF1A1A1F),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const SizedBox(height: 12),
-          Container(
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          const SizedBox(height: 20),
-          ListTile(
-            leading: Icon(Icons.add, color: _dominantColor),
-            title: const Text('Adicionar faixa', style: TextStyle(color: Colors.white)),
-            onTap: () {
-              Navigator.pop(context);
-              _navigateToUpload();
-            },
-          ),
-          ListTile(
-            leading: Icon(Icons.edit_outlined, color: _dominantColor),
-            title: const Text('Editar projeto', style: TextStyle(color: Colors.white)),
-            onTap: () => Navigator.pop(context),
-          ),
-          ListTile(
-            leading: Icon(Icons.share_outlined, color: _dominantColor),
-            title: const Text('Compartilhar', style: TextStyle(color: Colors.white)),
-            onTap: () => Navigator.pop(context),
-          ),
-          const SizedBox(height: 20),
-        ],
-      ),
-    );
+    // Redirecionar para o novo método de opções do projeto
+    _showProjectOptions();
   }
 
   void _showTrackOptions(AudioVersion version) {
@@ -658,19 +807,400 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
             },
           ),
           ListTile(
+            leading: Icon(Icons.comment_outlined, color: _dominantColor),
+            title: const Text('Comentários', style: TextStyle(color: Colors.white)),
+            onTap: () {
+              Navigator.pop(context);
+              _showFeedbackModal(context, version);
+            },
+          ),
+          ListTile(
+            leading: Icon(Icons.edit_outlined, color: _dominantColor),
+            title: const Text('Editar', style: TextStyle(color: Colors.white)),
+            onTap: () {
+              Navigator.pop(context);
+              _editVersion(version);
+            },
+          ),
+          ListTile(
             leading: Icon(Icons.download_outlined, color: _dominantColor),
             title: const Text('Baixar', style: TextStyle(color: Colors.white)),
-            onTap: () => Navigator.pop(context),
+            onTap: () {
+              Navigator.pop(context);
+              _downloadVersion(version);
+            },
           ),
           ListTile(
             leading: const Icon(Icons.delete_outline, color: Colors.redAccent),
             title: const Text('Excluir', style: TextStyle(color: Colors.redAccent)),
-            onTap: () => Navigator.pop(context),
+            onTap: () {
+              Navigator.pop(context);
+              _deleteVersion(version);
+            },
           ),
           const SizedBox(height: 20),
         ],
       ),
     );
+  }
+
+  Future<void> _editVersion(AudioVersion version) async {
+    await showDialog(
+      context: context,
+      builder: (context) => EditVersionModal(
+        version: version,
+        onUpdated: () {
+          _loadData();
+        },
+      ),
+    );
+  }
+
+  Future<void> _deleteVersion(AudioVersion version) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A1F),
+        title: const Text(
+          'Excluir Versão',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: Text(
+          'Tem certeza que deseja excluir "${version.name}"?\n\n'
+          'Esta ação não pode ser desfeita.',
+          style: TextStyle(color: Colors.white.withOpacity(0.7)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.white70)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Excluir'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      final repository = AudioRepository();
+      await repository.deleteVersion(version.id);
+      
+      if (mounted) {
+        _loadData();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Versão "${version.name}" excluída'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao excluir: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  void _showProjectOptions() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1A1A1F),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 12),
+          Container(
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(height: 20),
+          if (_project != null) ...[
+            ListTile(
+              leading: Icon(Icons.edit_outlined, color: _dominantColor),
+              title: const Text('Editar Projeto', style: TextStyle(color: Colors.white)),
+              onTap: () {
+                Navigator.pop(context);
+                _editProject();
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.image_outlined, color: _dominantColor),
+              title: const Text('Mudar Capa', style: TextStyle(color: Colors.white)),
+              onTap: () {
+                Navigator.pop(context);
+                _changeCover();
+              },
+            ),
+            ListTile(
+              leading: Icon(
+                _project!.isArchived ? Icons.unarchive_outlined : Icons.archive_outlined,
+                color: _dominantColor,
+              ),
+              title: Text(
+                _project!.isArchived ? 'Desarquivar' : 'Arquivar',
+                style: const TextStyle(color: Colors.white),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                _toggleArchive();
+              },
+            ),
+            const Divider(color: Color(0xFF2A2A2F)),
+          ],
+          const SizedBox(height: 20),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _editProject() async {
+    if (_project == null) return;
+    
+    await showDialog(
+      context: context,
+      builder: (context) => EditProjectModal(
+        project: _project!,
+        onUpdated: () {
+          _loadData();
+        },
+      ),
+    );
+  }
+
+  Future<void> _changeCover() async {
+    if (_project == null) return;
+
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        allowMultiple: false,
+        withData: kIsWeb, // No web, precisamos dos bytes diretamente
+      );
+
+      if (result != null && result.files.single.size > 0) {
+        Uint8List bytes;
+        String fileName;
+        
+        if (kIsWeb) {
+          // No web, usar bytes diretamente
+          bytes = result.files.single.bytes!;
+          fileName = result.files.single.name;
+        } else {
+          // Em mobile/desktop, usar path
+          if (result.files.single.path == null) {
+            throw Exception('Caminho do arquivo não disponível');
+          }
+          final file = File(result.files.single.path!);
+          bytes = await file.readAsBytes();
+          fileName = file.path.split('/').last;
+        }
+        
+        setState(() {
+          _isLoading = true;
+        });
+
+        try {
+          final imageRepo = ImageRepository();
+          final coverImageUrl = await imageRepo.uploadImage(
+            imageBytes: bytes,
+            fileName: fileName,
+            folder: 'covers',
+          );
+
+          final projectRepo = ProjectRepository();
+          final updatedProject = await projectRepo.updateProject(
+            id: _project!.id,
+            coverImageUrl: coverImageUrl,
+          );
+
+          if (mounted) {
+            // Atualizar o projeto localmente primeiro
+            setState(() {
+              _project = updatedProject;
+              _coverImageUrl = null; // Limpar URL antiga para forçar reload
+            });
+            
+            // Obter URL do proxy para a nova capa (evita CORS)
+            try {
+              debugPrint('[ChangeCover] Obtendo URL do proxy para: $coverImageUrl');
+              final proxyUrl = _imageRepo.getProxyImageUrl(coverImageUrl);
+              debugPrint('[ChangeCover] URL do proxy: $proxyUrl');
+              
+              if (mounted) {
+                setState(() {
+                  _coverImageUrl = proxyUrl;
+                });
+                debugPrint('[ChangeCover] Estado atualizado com nova URL do proxy');
+                
+                // Extrair cor dominante da nova capa
+                _extractColorFromCover(proxyUrl);
+              }
+            } catch (e) {
+              debugPrint('[ChangeCover] Erro ao obter URL do proxy: $e');
+              // Se falhar, tentar usar a URL diretamente (pode ser que já seja uma URL completa)
+              if (mounted) {
+                setState(() {
+                  _coverImageUrl = coverImageUrl.startsWith('http') 
+                      ? coverImageUrl 
+                      : null;
+                });
+              }
+            }
+            
+            // Recarregar dados para garantir sincronização (preservando a URL assinada)
+            // Fazer isso de forma assíncrona para não bloquear a UI
+            Future.delayed(const Duration(milliseconds: 100), () {
+              if (mounted) {
+                _loadData(preserveCoverUrl: true);
+              }
+            });
+            
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Capa atualizada com sucesso!'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Erro ao fazer upload: $e'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        } finally {
+          if (mounted) {
+            setState(() {
+              _isLoading = false;
+            });
+          }
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao selecionar imagem: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _downloadVersion(AudioVersion version) async {
+    try {
+      // Obter URL assinada
+      final repository = AudioRepository();
+      final signedUrl = await repository.getSignedUrl(version.fileUrl);
+      
+      // Abrir URL no navegador para download
+      final uri = Uri.parse(signedUrl);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Download iniciado: ${version.name}'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        throw Exception('Não foi possível abrir a URL de download');
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao baixar: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _toggleArchive() async {
+    if (_project == null) return;
+
+    final isArchiving = !_project!.isArchived;
+    final action = isArchiving ? 'arquivar' : 'desarquivar';
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A1F),
+        title: Text(
+          isArchiving ? 'Arquivar Projeto' : 'Desarquivar Projeto',
+          style: const TextStyle(color: Colors.white),
+        ),
+        content: Text(
+          'Tem certeza que deseja $action "${_project!.name}"?',
+          style: TextStyle(color: Colors.white.withOpacity(0.7)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.white70)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(action, style: const TextStyle(color: Color(0xFF1E88E5))),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      final repository = ProjectRepository();
+      await repository.updateProject(
+        id: _project!.id,
+        isArchived: isArchiving,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Projeto ${isArchiving ? 'arquivado' : 'desarquivado'} com sucesso!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        Navigator.pop(context); // Voltar para lista de projetos
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao $action: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   String _formatDuration(Duration duration) {
@@ -681,7 +1211,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen>
       final mins = minutes % 60;
       return '${hours}h ${mins}m';
     }
-    return '${minutes}:${seconds.toString().padLeft(2, '0')}';
+    return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
 }
 
@@ -772,12 +1302,13 @@ class _ActionIcon extends StatelessWidget {
   }
 }
 
-class _TrackTile extends StatelessWidget {
+class _TrackTile extends StatefulWidget {
   final int index;
   final AudioVersion version;
   final Color accentColor;
   final VoidCallback onTap;
   final VoidCallback onMore;
+  final VoidCallback onComments;
 
   const _TrackTile({
     required this.index,
@@ -785,19 +1316,51 @@ class _TrackTile extends StatelessWidget {
     required this.accentColor,
     required this.onTap,
     required this.onMore,
+    required this.onComments,
   });
+
+  @override
+  State<_TrackTile> createState() => _TrackTileState();
+}
+
+class _TrackTileState extends State<_TrackTile> {
+  int _commentCount = 0;
+  bool _isLoadingCount = true;
+  final _feedbackRepo = FeedbackRepository();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCommentCount();
+  }
+
+  Future<void> _loadCommentCount() async {
+    try {
+      final count = await _feedbackRepo.getFeedbackCount(widget.version.id);
+      if (mounted) {
+        setState(() {
+          _commentCount = count;
+          _isLoadingCount = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoadingCount = false);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final playerProvider = context.watch<AudioPlayerProvider>();
     final currentVersion = playerProvider.getCurrentVersion();
-    final isPlaying = currentVersion?.id == version.id && playerProvider.isPlaying;
-    final isCurrentTrack = currentVersion?.id == version.id;
+    final isPlaying = currentVersion?.id == widget.version.id && playerProvider.isPlaying;
+    final isCurrentTrack = currentVersion?.id == widget.version.id;
 
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: onTap,
+        onTap: widget.onTap,
         borderRadius: BorderRadius.circular(8),
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
@@ -807,11 +1370,11 @@ class _TrackTile extends StatelessWidget {
               SizedBox(
                 width: 32,
                 child: isPlaying
-                    ? _PlayingAnimation(color: accentColor)
+                    ? _PlayingAnimation(color: widget.accentColor)
                     : Text(
-                        '$index',
+                        '${widget.index}',
                         style: TextStyle(
-                          color: isCurrentTrack ? accentColor : Colors.white.withOpacity(0.5),
+                          color: isCurrentTrack ? widget.accentColor : Colors.white.withOpacity(0.5),
                           fontSize: 14,
                           fontWeight: FontWeight.w500,
                         ),
@@ -826,9 +1389,9 @@ class _TrackTile extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      version.name,
+                      widget.version.name,
                       style: TextStyle(
-                        color: isCurrentTrack ? accentColor : Colors.white,
+                        color: isCurrentTrack ? widget.accentColor : Colors.white,
                         fontSize: 15,
                         fontWeight: FontWeight.w500,
                       ),
@@ -838,17 +1401,17 @@ class _TrackTile extends StatelessWidget {
                     const SizedBox(height: 2),
                     Row(
                       children: [
-                        if (_isLossless(version.format)) ...[
+                        if (_isLossless(widget.version.format)) ...[
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
                             decoration: BoxDecoration(
-                              color: accentColor.withOpacity(0.2),
+                              color: widget.accentColor.withOpacity(0.2),
                               borderRadius: BorderRadius.circular(4),
                             ),
                             child: Text(
                               'LOSSLESS',
                               style: TextStyle(
-                                color: accentColor,
+                                color: widget.accentColor,
                                 fontSize: 8,
                                 fontWeight: FontWeight.w700,
                               ),
@@ -857,7 +1420,7 @@ class _TrackTile extends StatelessWidget {
                           const SizedBox(width: 6),
                         ],
                         Text(
-                          version.format?.toUpperCase() ?? 'WAV',
+                          widget.version.format?.toUpperCase() ?? 'WAV',
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.4),
                             fontSize: 11,
@@ -869,9 +1432,52 @@ class _TrackTile extends StatelessWidget {
                 ),
               ),
               
+              // Botão de comentários (se houver)
+              if (_commentCount > 0 || _isLoadingCount) ...[
+                GestureDetector(
+                  onTap: widget.onComments,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: widget.accentColor.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.comment_outlined,
+                          size: 14,
+                          color: widget.accentColor,
+                        ),
+                        const SizedBox(width: 4),
+                        _isLoadingCount
+                            ? SizedBox(
+                                width: 12,
+                                height: 12,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(widget.accentColor),
+                                ),
+                              )
+                            : Text(
+                                '$_commentCount',
+                                style: TextStyle(
+                                  color: widget.accentColor,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+              
               // Duração
               Text(
-                version.formattedDuration,
+                widget.version.formattedDuration,
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.5),
                   fontSize: 13,
@@ -882,7 +1488,7 @@ class _TrackTile extends StatelessWidget {
               // Menu
               IconButton(
                 icon: Icon(Icons.more_horiz, color: Colors.white.withOpacity(0.5), size: 20),
-                onPressed: onMore,
+                onPressed: widget.onMore,
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               ),
@@ -896,6 +1502,123 @@ class _TrackTile extends StatelessWidget {
   bool _isLossless(String? format) {
     if (format == null) return false;
     return ['wav', 'flac', 'aiff', 'alac'].contains(format.toLowerCase());
+  }
+}
+
+// Widget para o conteúdo do modal de feedback
+class _FeedbackModalContent extends StatefulWidget {
+  final AudioVersion version;
+  final Color accentColor;
+  final AudioPlayerProvider playerProvider;
+  
+  const _FeedbackModalContent({
+    required this.version,
+    required this.accentColor,
+    required this.playerProvider,
+  });
+  
+  @override
+  State<_FeedbackModalContent> createState() => _FeedbackModalContentState();
+}
+
+class _FeedbackModalContentState extends State<_FeedbackModalContent> {
+  final _listKey = GlobalKey<FeedbackListWidgetState>();
+  
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.7,
+      minChildSize: 0.5,
+      maxChildSize: 0.9,
+      expand: false,
+      builder: (context, scrollController) => Column(
+        children: [
+          // Header
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.comment_outlined,
+                  color: widget.accentColor,
+                  size: 24,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Comentários',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        widget.version.name,
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.6),
+                          fontSize: 14,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
+                  color: Colors.white,
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: Color(0xFF2A2A2F)),
+          // Lista de comentários
+          Expanded(
+            child: FeedbackListWidget(
+              key: _listKey,
+              audioVersionId: widget.version.id,
+              onCountChanged: (count) {
+                // Atualizar contagem se necessário
+              },
+            ),
+          ),
+          // Formulário de comentário
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1A1A1F),
+              border: Border(
+                top: BorderSide(
+                  color: Colors.white.withOpacity(0.1),
+                  width: 1,
+                ),
+              ),
+            ),
+            child: StreamBuilder<Duration>(
+              stream: widget.playerProvider.getCurrentVersion()?.id == widget.version.id
+                  ? widget.playerProvider.positionStream
+                  : null,
+              builder: (context, snapshot) {
+                final timestamp = snapshot.data?.inSeconds;
+                return FeedbackFormWidget(
+                  audioVersionId: widget.version.id,
+                  currentTimestamp: timestamp,
+                  onSubmitted: () {
+                    // Recarregar lista de comentários
+                    _listKey.currentState?.reload();
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

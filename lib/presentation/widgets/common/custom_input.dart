@@ -165,7 +165,7 @@ class _CustomInputState extends State<CustomInput> {
           const SizedBox(height: 8),
           Row(
             children: [
-              Icon(
+              const Icon(
                 Icons.error_outline_rounded,
                 size: 14,
                 color: AppTheme.error,
@@ -275,7 +275,7 @@ class _SearchInputState extends State<SearchInput> {
                       widget.controller?.clear();
                       widget.onClear?.call();
                     },
-                    child: Icon(
+                    child: const Icon(
                       Icons.close_rounded,
                       color: AppTheme.textTertiary,
                       size: 18,

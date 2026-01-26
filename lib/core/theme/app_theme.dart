@@ -246,7 +246,7 @@ class AppTheme {
       brightness: Brightness.dark,
       
       // Esquema de cores
-      colorScheme: ColorScheme.dark(
+      colorScheme: const ColorScheme.dark(
         primary: primary,
         onPrimary: surface,
         primaryContainer: primaryDark,
